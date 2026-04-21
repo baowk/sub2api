@@ -128,6 +128,15 @@ func ProvideAntigravityTokenProvider(
 	return p
 }
 
+// ProvideOAuthRefreshAPI wraps NewOAuthRefreshAPI so Wire doesn't have to satisfy
+// the variadic lockTTL parameter.
+func ProvideOAuthRefreshAPI(
+	accountRepo AccountRepository,
+	tokenCache GeminiTokenCache,
+) *OAuthRefreshAPI {
+	return NewOAuthRefreshAPI(accountRepo, tokenCache)
+}
+
 // ProvideDashboardAggregationService 创建并启动仪表盘聚合服务
 func ProvideDashboardAggregationService(repo DashboardAggregationRepository, timingWheel *TimingWheelService, cfg *config.Config) *DashboardAggregationService {
 	svc := NewDashboardAggregationService(repo, timingWheel, cfg)
@@ -417,6 +426,7 @@ var ProviderSet = wire.NewSet(
 	NewRedeemService,
 	NewPromoService,
 	NewUsageService,
+	NewChatSessionService,
 	NewDashboardService,
 	ProvidePricingService,
 	NewBillingService,

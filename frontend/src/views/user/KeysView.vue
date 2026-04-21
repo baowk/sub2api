@@ -344,6 +344,13 @@
               </button>
               <!-- Edit Button -->
               <button
+                @click="openChatSessions(row)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/20 dark:hover:text-indigo-400"
+              >
+                <Icon name="chat" size="sm" />
+                <span class="text-xs">聊天 Session</span>
+              </button>
+              <button
                 @click="editKey(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
@@ -1047,6 +1054,7 @@
 <script setup lang="ts">
 	import { ref, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
@@ -1094,6 +1102,7 @@ interface GroupOption {
 const appStore = useAppStore()
 const onboardingStore = useOnboardingStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
+const router = useRouter()
 
 const columns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
@@ -1407,6 +1416,13 @@ const editKey = (key: ApiKey) => {
     expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : ''
   }
   showEditModal.value = true
+}
+
+const openChatSessions = (key: ApiKey) => {
+  router.push({
+    name: 'KeyChatSessions',
+    params: { id: key.id }
+  })
 }
 
 const toggleKeyStatus = async (key: ApiKey) => {

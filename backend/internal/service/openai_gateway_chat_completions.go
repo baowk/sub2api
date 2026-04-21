@@ -402,6 +402,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	acc.SupplementResponseOutput(finalResponse)
 
 	chatResp := apicompat.ResponsesToChatCompletions(finalResponse, originalModel)
+	finalOutputText := extractChatCompletionsAssistantText(chatResp)
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -416,6 +417,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 		UpstreamModel: upstreamModel,
 		Stream:        false,
 		Duration:      time.Since(startTime),
+		FinalOutputText: finalOutputText,
 	}, nil
 }
 

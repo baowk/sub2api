@@ -18,13 +18,15 @@ import (
 
 // APIKeyHandler handles API key-related requests
 type APIKeyHandler struct {
-	apiKeyService *service.APIKeyService
+	apiKeyService      *service.APIKeyService
+	chatSessionService *service.ChatSessionService
 }
 
 // NewAPIKeyHandler creates a new APIKeyHandler
-func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
+func NewAPIKeyHandler(apiKeyService *service.APIKeyService, chatSessionService *service.ChatSessionService) *APIKeyHandler {
 	return &APIKeyHandler{
-		apiKeyService: apiKeyService,
+		apiKeyService:      apiKeyService,
+		chatSessionService: chatSessionService,
 	}
 }
 
@@ -270,6 +272,100 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"message": "API key deleted successfully"})
 }
 
+// ListChatSessions handles listing chat sessions for an API key.
+// GET /api/v1/keys/:id/chat-sessions
+func (h *APIKeyHandler) ListChatSessions(c *gin.Context) {
+	if h.chatSessionService == nil {
+		response.Success(c, response.PaginatedData{Items: []*service.ChatSession{}, Total: 0, Page: 1, PageSize: 20, Pages: 1})
+		return
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	keyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid key ID")
+		return
+	}
+
+	params := pagination.PaginationParams{
+		Page:      maxInt(1, parsePositiveInt(c.Query("page"), 1)),
+		PageSize:  minInt(100, maxInt(1, parsePositiveInt(c.Query("page_size"), 20))),
+		SortBy:    "created_at",
+		SortOrder: "desc",
+	}
+
+	items, total, err := h.chatSessionService.ListSessionsByAPIKey(c.Request.Context(), subject.UserID, keyID, params)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Paginated(c, items, total, params.Page, params.PageSize)
+}
+
+// GetChatSession handles loading a single chat session with its latest messages.
+// GET /api/v1/keys/:id/chat-sessions/:sessionId
+func (h *APIKeyHandler) GetChatSession(c *gin.Context) {
+	if h.chatSessionService == nil {
+		response.NotFound(c, "Chat session feature is not enabled")
+		return
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	keyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid key ID")
+		return
+	}
+	sessionID, err := strconv.ParseInt(c.Param("sessionId"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid session ID")
+		return
+	}
+	limit := minInt(200, maxInt(1, parsePositiveInt(c.Query("limit"), 50)))
+
+	item, err := h.chatSessionService.GetSessionDetail(c.Request.Context(), subject.UserID, keyID, sessionID, limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, item)
+}
+
+// ListRecentChatMessages handles listing recent chat messages for an API key.
+// GET /api/v1/keys/:id/chat-messages
+func (h *APIKeyHandler) ListRecentChatMessages(c *gin.Context) {
+	if h.chatSessionService == nil {
+		response.Success(c, []*service.ChatMessage{})
+		return
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	keyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid key ID")
+		return
+	}
+	limit := minInt(200, maxInt(1, parsePositiveInt(c.Query("limit"), 50)))
+	items, err := h.chatSessionService.ListRecentMessagesByAPIKey(c.Request.Context(), subject.UserID, keyID, limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, items)
+}
+
 // GetAvailableGroups 获取用户可以绑定的分组列表
 // GET /api/v1/groups/available
 func (h *APIKeyHandler) GetAvailableGroups(c *gin.Context) {
@@ -308,4 +404,30 @@ func (h *APIKeyHandler) GetUserGroupRates(c *gin.Context) {
 	}
 
 	response.Success(c, rates)
+}
+
+func parsePositiveInt(value string, fallback int) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

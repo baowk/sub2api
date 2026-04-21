@@ -4,7 +4,15 @@
  */
 
 import { apiClient } from './client'
-import type { ApiKey, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
+import type {
+  ApiKey,
+  ChatMessage,
+  ChatSession,
+  ChatSessionDetail,
+  CreateApiKeyRequest,
+  UpdateApiKeyRequest,
+  PaginatedResponse
+} from '@/types'
 
 /**
  * List all API keys for current user
@@ -121,6 +129,41 @@ export async function deleteKey(id: number): Promise<{ message: string }> {
   return data
 }
 
+export async function listChatSessions(
+  id: number,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<PaginatedResponse<ChatSession>> {
+  const { data } = await apiClient.get<PaginatedResponse<ChatSession>>(`/keys/${id}/chat-sessions`, {
+    params: {
+      page,
+      page_size: pageSize
+    }
+  })
+  return data
+}
+
+export async function getChatSession(
+  id: number,
+  sessionId: number,
+  limit: number = 50
+): Promise<ChatSessionDetail> {
+  const { data } = await apiClient.get<ChatSessionDetail>(`/keys/${id}/chat-sessions/${sessionId}`, {
+    params: { limit }
+  })
+  return data
+}
+
+export async function listRecentChatMessages(
+  id: number,
+  limit: number = 50
+): Promise<ChatMessage[]> {
+  const { data } = await apiClient.get<ChatMessage[]>(`/keys/${id}/chat-messages`, {
+    params: { limit }
+  })
+  return data
+}
+
 /**
  * Toggle API key status (active/inactive)
  * @param id - API key ID
@@ -137,7 +180,10 @@ export const keysAPI = {
   create,
   update,
   delete: deleteKey,
-  toggleStatus
+  toggleStatus,
+  listRecentChatMessages,
+  listChatSessions,
+  getChatSession
 }
 
 export default keysAPI
