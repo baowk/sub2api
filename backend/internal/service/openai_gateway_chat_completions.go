@@ -65,12 +65,108 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// derive a stable seed from the final upstream model family.
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	chatCompletionsCompat := account != nil && account.IsOpenAIChatCompletionsCompatEnabled()
 
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	compatPromptCacheInjected := false
 	if promptCacheKey == "" && account.Type == AccountTypeOAuth && shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 		promptCacheKey = deriveCompatPromptCacheKey(&chatReq, upstreamModel)
 		compatPromptCacheInjected = promptCacheKey != ""
+	}
+
+	if chatCompletionsCompat {
+		isResponsesShape := !gjson.GetBytes(body, "messages").Exists() && gjson.GetBytes(body, "input").Exists()
+		if isResponsesShape {
+			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", "Responses-style body is not supported when chat completions compatibility mode is enabled")
+			return nil, fmt.Errorf("responses-style body is not supported in openai_chat_completions_compat mode")
+		}
+
+		compatBody, err := sjson.SetBytes(body, "model", upstreamModel)
+		if err != nil {
+			return nil, fmt.Errorf("rewrite model in chat completions body: %w", err)
+		}
+
+		token, _, err := s.GetAccessToken(ctx, account)
+		if err != nil {
+			return nil, fmt.Errorf("get access token: %w", err)
+		}
+
+		upstreamReq, err := s.buildUpstreamRequestChatCompletionsCompat(ctx, c, account, compatBody, token, clientStream)
+		if err != nil {
+			return nil, fmt.Errorf("build upstream request: %w", err)
+		}
+
+		proxyURL := ""
+		if account.Proxy != nil {
+			proxyURL = account.Proxy.URL()
+		}
+		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		if err != nil {
+			safeErr := sanitizeUpstreamErrorMessage(err.Error())
+			setOpsUpstreamError(c, 0, safeErr, "")
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: 0,
+				Kind:               "request_error",
+				Message:            safeErr,
+			})
+			writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
+			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode >= 400 {
+			return s.handleChatCompletionsErrorResponse(resp, c, account)
+		}
+
+		var (
+			usage           *OpenAIUsage
+			firstTokenMs    *int
+			finalOutputText string
+		)
+		if clientStream {
+			streamResult, err := s.handleChatCompletionsCompatStreamingResponse(resp, c, originalModel, upstreamModel, startTime)
+			if err != nil {
+				return nil, err
+			}
+			usage = streamResult.usage
+			firstTokenMs = streamResult.firstTokenMs
+			finalOutputText = streamResult.finalOutputText
+		} else {
+			var err error
+			usage, finalOutputText, err = s.handleChatCompletionsCompatNonStreamingResponse(resp, c, originalModel, upstreamModel)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if usage == nil {
+			usage = &OpenAIUsage{}
+		}
+
+		var serviceTier *string
+		if st := strings.TrimSpace(chatReq.ServiceTier); st != "" {
+			serviceTier = &st
+		}
+		var reasoningEffort *string
+		if effort := strings.TrimSpace(chatReq.ReasoningEffort); effort != "" {
+			reasoningEffort = &effort
+		}
+
+		return &OpenAIForwardResult{
+			RequestID:       resp.Header.Get("x-request-id"),
+			Usage:           *usage,
+			Model:           originalModel,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+			ServiceTier:     serviceTier,
+			ReasoningEffort: reasoningEffort,
+			Stream:          clientStream,
+			Duration:        time.Since(startTime),
+			FirstTokenMs:    firstTokenMs,
+			FinalOutputText: finalOutputText,
+		}, nil
 	}
 
 	// 3. Build the upstream (Responses API) body.
@@ -107,15 +203,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				responsesBody = stripped
 			}
 		}
-		responsesBody, normalizedServiceTier, err := normalizeResponsesBodyServiceTier(responsesBody)
-		if err != nil {
-			return nil, fmt.Errorf("normalize service_tier in responses-shape body: %w", err)
-		}
 		// Minimal stub populated from the raw body so downstream billing
 		// propagation (ServiceTier, ReasoningEffort) keeps working.
 		responsesReq = &apicompat.ResponsesRequest{
 			Model:       upstreamModel,
-			ServiceTier: normalizedServiceTier,
+			ServiceTier: gjson.GetBytes(responsesBody, "service_tier").String(),
 		}
 		if effort := gjson.GetBytes(responsesBody, "reasoning.effort").String(); effort != "" {
 			responsesReq.Reasoning = &apicompat.ResponsesReasoning{Effort: effort}
@@ -128,7 +220,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			return nil, fmt.Errorf("convert chat completions to responses: %w", err)
 		}
 		responsesReq.Model = upstreamModel
-		normalizeResponsesRequestServiceTier(responsesReq)
 		responsesBody, err = json.Marshal(responsesReq)
 		if err != nil {
 			return nil, fmt.Errorf("marshal responses request: %w", err)
@@ -279,39 +370,241 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	return result, handleErr
 }
 
-func normalizeResponsesRequestServiceTier(req *apicompat.ResponsesRequest) {
-	if req == nil {
+func (s *OpenAIGatewayService) buildUpstreamRequestChatCompletionsCompat(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	token string,
+	clientStream bool,
+) (*http.Request, error) {
+	baseURL := account.GetOpenAIBaseURL()
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	validatedURL, err := s.validateUpstreamBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	targetURL := buildOpenAIChatCompletionsURL(validatedURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("authorization", "Bearer "+token)
+	req.Header.Set("content-type", "application/json")
+	if clientStream {
+		req.Header.Set("accept", "text/event-stream")
+	} else {
+		req.Header.Set("accept", "application/json")
+	}
+	for key, values := range c.Request.Header {
+		lowerKey := strings.ToLower(key)
+		if openaiAllowedHeaders[lowerKey] {
+			for _, v := range values {
+				req.Header.Add(key, v)
+			}
+		}
+	}
+	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
+		req.Header.Set("user-agent", customUA)
+	}
+	return req, nil
+}
+
+func extractOpenAIChatCompletionsUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return OpenAIUsage{}, false
+	}
+	values := gjson.GetManyBytes(
+		body,
+		"usage.prompt_tokens",
+		"usage.completion_tokens",
+		"usage.prompt_tokens_details.cached_tokens",
+		"usage.input_tokens",
+		"usage.output_tokens",
+	)
+	prompt := int(values[0].Int())
+	completion := int(values[1].Int())
+	cached := int(values[2].Int())
+	if prompt == 0 && completion == 0 {
+		prompt = int(values[3].Int())
+		completion = int(values[4].Int())
+	}
+	return OpenAIUsage{
+		InputTokens:          prompt,
+		OutputTokens:         completion,
+		CacheReadInputTokens: cached,
+	}, prompt > 0 || completion > 0 || cached > 0
+}
+
+func parseOpenAIChatCompletionsSSEUsageBytes(data []byte, usage *OpenAIUsage) {
+	if usage == nil || len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 		return
 	}
-	req.ServiceTier = normalizedOpenAIServiceTierValue(req.ServiceTier)
+	prompt := int(gjson.GetBytes(data, "usage.prompt_tokens").Int())
+	completion := int(gjson.GetBytes(data, "usage.completion_tokens").Int())
+	cached := int(gjson.GetBytes(data, "usage.prompt_tokens_details.cached_tokens").Int())
+	if prompt == 0 && completion == 0 && cached == 0 {
+		return
+	}
+	usage.InputTokens = prompt
+	usage.OutputTokens = completion
+	usage.CacheReadInputTokens = cached
 }
 
-func normalizeResponsesBodyServiceTier(body []byte) ([]byte, string, error) {
-	if len(body) == 0 {
-		return body, "", nil
-	}
-	rawServiceTier := gjson.GetBytes(body, "service_tier").String()
-	if rawServiceTier == "" {
-		return body, "", nil
-	}
-	normalizedServiceTier := normalizedOpenAIServiceTierValue(rawServiceTier)
-	if normalizedServiceTier == "" {
-		trimmed, err := sjson.DeleteBytes(body, "service_tier")
-		return trimmed, "", err
-	}
-	if normalizedServiceTier == rawServiceTier {
-		return body, normalizedServiceTier, nil
-	}
-	trimmed, err := sjson.SetBytes(body, "service_tier", normalizedServiceTier)
-	return trimmed, normalizedServiceTier, err
-}
-
-func normalizedOpenAIServiceTierValue(raw string) string {
-	normalized := normalizeOpenAIServiceTier(raw)
-	if normalized == nil {
+func extractOpenAIChatCompletionsDeltaText(data []byte) string {
+	if len(data) == 0 {
 		return ""
 	}
-	return *normalized
+	return strings.TrimSpace(gjson.GetBytes(data, "choices.0.delta.content").String())
+}
+
+func extractOpenAIChatCompletionsMessageText(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(gjson.GetBytes(body, "choices.0.message.content").String())
+}
+
+func (s *OpenAIGatewayService) handleChatCompletionsCompatNonStreamingResponse(
+	resp *http.Response,
+	c *gin.Context,
+	originalModel string,
+	upstreamModel string,
+) (*OpenAIUsage, string, error) {
+	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	if err != nil {
+		return nil, "", err
+	}
+	usageValue, usageOK := extractOpenAIChatCompletionsUsageFromJSONBytes(body)
+	if !usageOK {
+		return nil, "", fmt.Errorf("parse chat completions response: invalid json response")
+	}
+	if originalModel != upstreamModel {
+		body = s.replaceModelInResponseBody(body, upstreamModel, originalModel)
+	}
+	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	c.Data(resp.StatusCode, contentType, body)
+	return &usageValue, extractOpenAIChatCompletionsMessageText(body), nil
+}
+
+func (s *OpenAIGatewayService) handleChatCompletionsCompatStreamingResponse(
+	resp *http.Response,
+	c *gin.Context,
+	originalModel string,
+	upstreamModel string,
+	startTime time.Time,
+) (*openaiStreamingResult, error) {
+	if s.responseHeaderFilter != nil {
+		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	w := c.Writer
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return nil, errors.New("streaming not supported")
+	}
+	bufferedWriter := bufio.NewWriterSize(w, 4*1024)
+	flushBuffered := func() error {
+		if err := bufferedWriter.Flush(); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	usage := &OpenAIUsage{}
+	var firstTokenMs *int
+	var finalTextBuilder strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	maxLineSize := defaultMaxLineSize
+	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+		maxLineSize = s.cfg.Gateway.MaxLineSize
+	}
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+
+	sawDone := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if data, ok := extractOpenAISSEDataLine(line); ok {
+			if originalModel != upstreamModel && upstreamModel != "" && strings.Contains(data, upstreamModel) {
+				line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
+				data, _ = extractOpenAISSEDataLine(line)
+			}
+			if _, err := bufferedWriter.WriteString(line + "\n"); err != nil {
+				return &openaiStreamingResult{
+					usage:           usage,
+					firstTokenMs:    firstTokenMs,
+					finalOutputText: strings.TrimSpace(finalTextBuilder.String()),
+				}, fmt.Errorf("stream write error: %w", err)
+			}
+			if err := flushBuffered(); err != nil {
+				return &openaiStreamingResult{
+					usage:           usage,
+					firstTokenMs:    firstTokenMs,
+					finalOutputText: strings.TrimSpace(finalTextBuilder.String()),
+				}, fmt.Errorf("stream flush error: %w", err)
+			}
+			if data == "[DONE]" {
+				sawDone = true
+				continue
+			}
+			dataBytes := []byte(data)
+			if firstTokenMs == nil {
+				ms := int(time.Since(startTime).Milliseconds())
+				firstTokenMs = &ms
+			}
+			parseOpenAIChatCompletionsSSEUsageBytes(dataBytes, usage)
+			if delta := extractOpenAIChatCompletionsDeltaText(dataBytes); delta != "" {
+				finalTextBuilder.WriteString(delta)
+			}
+			continue
+		}
+		if _, err := bufferedWriter.WriteString(line + "\n"); err != nil {
+			return &openaiStreamingResult{
+				usage:           usage,
+				firstTokenMs:    firstTokenMs,
+				finalOutputText: strings.TrimSpace(finalTextBuilder.String()),
+			}, fmt.Errorf("stream write error: %w", err)
+		}
+		if err := flushBuffered(); err != nil {
+			return &openaiStreamingResult{
+				usage:           usage,
+				firstTokenMs:    firstTokenMs,
+				finalOutputText: strings.TrimSpace(finalTextBuilder.String()),
+			}, fmt.Errorf("stream flush error: %w", err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return &openaiStreamingResult{
+			usage:           usage,
+			firstTokenMs:    firstTokenMs,
+			finalOutputText: strings.TrimSpace(finalTextBuilder.String()),
+		}, fmt.Errorf("stream read error: %w", err)
+	}
+	if !sawDone {
+		return &openaiStreamingResult{
+			usage:           usage,
+			firstTokenMs:    firstTokenMs,
+			finalOutputText: strings.TrimSpace(finalTextBuilder.String()),
+		}, fmt.Errorf("stream usage incomplete: missing terminal event")
+	}
+	return &openaiStreamingResult{
+		usage:           usage,
+		firstTokenMs:    firstTokenMs,
+		finalOutputText: strings.TrimSpace(finalTextBuilder.String()),
+	}, nil
 }
 
 // handleChatCompletionsErrorResponse reads an upstream error and returns it in
@@ -410,13 +703,13 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	c.JSON(http.StatusOK, chatResp)
 
 	return &OpenAIForwardResult{
-		RequestID:     requestID,
-		Usage:         usage,
-		Model:         originalModel,
-		BillingModel:  billingModel,
-		UpstreamModel: upstreamModel,
-		Stream:        false,
-		Duration:      time.Since(startTime),
+		RequestID:       requestID,
+		Usage:           usage,
+		Model:           originalModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+		Stream:          false,
+		Duration:        time.Since(startTime),
 		FinalOutputText: finalOutputText,
 	}, nil
 }

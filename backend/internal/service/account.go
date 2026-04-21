@@ -1017,6 +1017,19 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 	return false
 }
 
+// IsOpenAIChatCompletionsCompatEnabled returns whether an OpenAI API Key
+// account should call an OpenAI-compatible /v1/chat/completions upstream
+// instead of the Responses API.
+func (a *Account) IsOpenAIChatCompletionsCompatEnabled() bool {
+	if a == nil || !a.IsOpenAIApiKey() || a.Extra == nil {
+		return false
+	}
+	if enabled, ok := a.Extra["openai_chat_completions_compat"].(bool); ok {
+		return enabled
+	}
+	return false
+}
+
 // IsOpenAIResponsesWebSocketV2Enabled 返回 OpenAI 账号是否开启 Responses WebSocket v2。
 //
 // 分类型新字段：
