@@ -2763,10 +2763,10 @@ export default {
         enableScheduling: 'Enable Scheduling',
         disableScheduling: 'Disable Scheduling',
         resetStatus: 'Reset Status',
-        fetchAccountInfo: 'Fetch Account Info',
+        fetchAccountInfo: 'Sync Plan & Models',
         refreshToken: 'Refresh Token',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
-        fetchAccountInfoSuccess: 'Successfully fetched {count} account(s) info',
+        fetchAccountInfoSuccess: 'Successfully synced plan and models for {count} account(s)',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
         partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
       },

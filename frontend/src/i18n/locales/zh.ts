@@ -2910,10 +2910,10 @@ export default {
         enableScheduling: '批量启用调度',
         disableScheduling: '批量停止调度',
         resetStatus: '批量重置状态',
-        fetchAccountInfo: '批量获取账号信息',
+        fetchAccountInfo: '批量同步套餐和模型',
         refreshToken: '批量刷新令牌',
         resetStatusSuccess: '已成功重置 {count} 个账号状态',
-        fetchAccountInfoSuccess: '已成功获取 {count} 个账号信息',
+        fetchAccountInfoSuccess: '已成功同步 {count} 个账号的套餐和模型',
         refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
         partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
       },

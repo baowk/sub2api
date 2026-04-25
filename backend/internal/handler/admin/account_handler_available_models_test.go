@@ -103,3 +103,39 @@ func TestAccountHandlerGetAvailableModels_OpenAIOAuthPassthroughFallsBackToDefau
 	require.NotEmpty(t, resp.Data)
 	require.NotEqual(t, "gpt-5", resp.Data[0].ID)
 }
+
+func TestAccountHandlerGetAvailableModels_OpenAIUsesSyncedSupportedModels(t *testing.T) {
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       44,
+			Name:     "openai-oauth-synced-models",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeOAuth,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"supported_models": []any{"gpt-5.5", "gpt-5.4-mini"},
+				"model_mapping": map[string]any{
+					"gpt-4": "gpt-4o",
+				},
+			},
+		},
+	}
+	router := setupAvailableModelsRouter(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/44/models", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Data, 2)
+	require.Equal(t, "gpt-5.4-mini", resp.Data[0].ID)
+	require.Equal(t, "gpt-5.5", resp.Data[1].ID)
+}

@@ -1064,6 +1064,9 @@ const handleBulkFetchAccountInfo = async () => {
       appStore.showSuccess(t('admin.accounts.bulkActions.fetchAccountInfoSuccess', { count: result.success }))
       clearSelection()
     }
+    if (result.warnings && result.warnings.length > 0) {
+      appStore.showWarning(result.warnings[0].warning)
+    }
     reload()
   } catch (error) {
     console.error('Failed to bulk fetch account info:', error)

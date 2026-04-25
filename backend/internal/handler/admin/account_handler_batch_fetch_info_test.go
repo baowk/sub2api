@@ -70,21 +70,32 @@ func TestAccountHandlerBatchFetchAccountInfo(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/backend-api/accounts/check/v4-2023-04-27", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"accounts": {
-				"org-1": {
-					"account": {
-						"plan_type": "pro",
-						"is_default": true
-					},
-					"entitlement": {
-						"expires_at": "2026-06-01T00:00:00Z"
+		switch r.URL.Path {
+		case "/backend-api/accounts/check/v4-2023-04-27":
+			_, _ = w.Write([]byte(`{
+				"accounts": {
+					"org-1": {
+						"account": {
+							"plan_type": "pro",
+							"is_default": true
+						},
+						"entitlement": {
+							"expires_at": "2026-06-01T00:00:00Z"
+						}
 					}
 				}
-			}
-		}`))
+			}`))
+		case "/backend-api/codex/models":
+			_, _ = w.Write([]byte(`{
+				"models": [
+					{"slug": "gpt-5.5"},
+					{"slug": "gpt-5.4-mini"}
+				]
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	defer server.Close()
 
@@ -119,4 +130,6 @@ func TestAccountHandlerBatchFetchAccountInfo(t *testing.T) {
 	require.NotNil(t, updated)
 	require.Equal(t, "pro", updated.Credentials["plan_type"])
 	require.Equal(t, "2026-06-01T00:00:00Z", updated.Credentials["subscription_expires_at"])
+	require.Equal(t, []string{"gpt-5.4-mini", "gpt-5.5"}, updated.Credentials["supported_models"])
+	require.NotEmpty(t, updated.Credentials["supported_models_synced_at"])
 }

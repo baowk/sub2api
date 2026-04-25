@@ -81,3 +81,39 @@ func TestOpenAIOAuthService_FetchAccountInfo(t *testing.T) {
 	require.Equal(t, "2026-05-01T00:00:00Z", info.SubscriptionExpiresAt)
 	require.Equal(t, "old@example.com", info.Email)
 }
+
+func TestOpenAIOAuthService_FetchSupportedModels(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/backend-api/codex/models", r.URL.Path)
+		require.Equal(t, "Bearer existing-access-token", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"models": [
+				{"slug": "gpt-5.5"},
+				{"slug": "gpt-5.4"},
+				{"slug": "gpt-5.5"}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	svc := NewOpenAIOAuthService(nil, nil)
+	svc.SetPrivacyClientFactory(func(proxyURL string) (*req.Client, error) {
+		return newOpenAIAccountInfoTestClient(t, server.URL), nil
+	})
+
+	account := &Account{
+		ID:       77,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "existing-access-token",
+		},
+	}
+
+	models, err := svc.FetchSupportedModels(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, []string{"gpt-5.4", "gpt-5.5"}, models)
+}

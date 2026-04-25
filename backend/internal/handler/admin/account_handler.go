@@ -93,6 +93,33 @@ func NewAccountHandler(
 	}
 }
 
+func buildOpenAIModelsFromIDs(modelIDs []string) []openai.Model {
+	if len(modelIDs) == 0 {
+		return nil
+	}
+
+	models := make([]openai.Model, 0, len(modelIDs))
+	for _, requestedModel := range modelIDs {
+		var found bool
+		for _, dm := range openai.DefaultModels {
+			if dm.ID == requestedModel {
+				models = append(models, dm)
+				found = true
+				break
+			}
+		}
+		if !found {
+			models = append(models, openai.Model{
+				ID:          requestedModel,
+				Object:      "model",
+				Type:        "model",
+				DisplayName: requestedModel,
+			})
+		}
+	}
+	return models
+}
+
 // CreateAccountRequest represents create account request
 type CreateAccountRequest struct {
 	Name                    string         `json:"name" binding:"required"`
@@ -1188,6 +1215,7 @@ func (h *AccountHandler) BatchFetchAccountInfo(c *gin.Context) {
 	var mu sync.Mutex
 	var successCount, failedCount int
 	var errors []gin.H
+	var warnings []gin.H
 
 	for _, id := range req.AccountIDs {
 		if !foundIDs[id] {
@@ -1217,24 +1245,42 @@ func (h *AccountHandler) BatchFetchAccountInfo(c *gin.Context) {
 				return nil
 			}
 
-			tokenInfo, err := h.openaiOAuthService.FetchAccountInfo(gctx, acc)
-			if err != nil {
-				mu.Lock()
-				failedCount++
-				errors = append(errors, gin.H{
-					"account_id": acc.ID,
-					"error":      err.Error(),
-				})
-				mu.Unlock()
-				return nil
-			}
-
 			newCredentials := make(map[string]any, len(acc.Credentials))
 			for k, v := range acc.Credentials {
 				newCredentials[k] = v
 			}
-			for k, v := range h.openaiOAuthService.BuildAccountCredentials(tokenInfo) {
-				newCredentials[k] = v
+
+			var detailErrors []string
+			fetchedAny := false
+
+			tokenInfo, infoErr := h.openaiOAuthService.FetchAccountInfo(gctx, acc)
+			if infoErr != nil {
+				detailErrors = append(detailErrors, "plan_type: "+infoErr.Error())
+			} else {
+				for k, v := range h.openaiOAuthService.BuildAccountCredentials(tokenInfo) {
+					newCredentials[k] = v
+				}
+				fetchedAny = true
+			}
+
+			supportedModels, modelsErr := h.openaiOAuthService.FetchSupportedModels(gctx, acc)
+			if modelsErr != nil {
+				detailErrors = append(detailErrors, "supported_models: "+modelsErr.Error())
+			} else if len(supportedModels) > 0 {
+				newCredentials["supported_models"] = supportedModels
+				newCredentials["supported_models_synced_at"] = time.Now().UTC().Format(time.RFC3339)
+				fetchedAny = true
+			}
+
+			if !fetchedAny {
+				mu.Lock()
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      strings.Join(detailErrors, "; "),
+				})
+				mu.Unlock()
+				return nil
 			}
 
 			if _, err := h.adminService.UpdateAccount(gctx, acc.ID, &service.UpdateAccountInput{
@@ -1252,6 +1298,12 @@ func (h *AccountHandler) BatchFetchAccountInfo(c *gin.Context) {
 
 			mu.Lock()
 			successCount++
+			if len(detailErrors) > 0 {
+				warnings = append(warnings, gin.H{
+					"account_id": acc.ID,
+					"warning":    strings.Join(detailErrors, "; "),
+				})
+			}
 			mu.Unlock()
 			return nil
 		})
@@ -1263,10 +1315,11 @@ func (h *AccountHandler) BatchFetchAccountInfo(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"total":   len(req.AccountIDs),
-		"success": successCount,
-		"failed":  failedCount,
-		"errors":  errors,
+		"total":    len(req.AccountIDs),
+		"success":  successCount,
+		"failed":   failedCount,
+		"errors":   errors,
+		"warnings": warnings,
 	})
 }
 
@@ -1921,6 +1974,11 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
+		if syncedModels := account.GetSupportedModelsSnapshot(); len(syncedModels) > 0 {
+			response.Success(c, buildOpenAIModelsFromIDs(syncedModels))
+			return
+		}
+
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {
 			response.Success(c, openai.DefaultModels)

@@ -355,6 +355,32 @@ func (s *OpenAIOAuthService) FetchAccountInfo(ctx context.Context, account *Acco
 	return tokenInfo, nil
 }
 
+// FetchSupportedModels uses the existing access_token to query the ChatGPT model catalog
+// visible to the current OpenAI OAuth account.
+func (s *OpenAIOAuthService) FetchSupportedModels(ctx context.Context, account *Account) ([]string, error) {
+	if account.Platform != PlatformOpenAI {
+		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT", "account is not an OpenAI account")
+	}
+	if account.Type != AccountTypeOAuth {
+		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT_TYPE", "account is not an OAuth account")
+	}
+	if s.privacyClientFactory == nil {
+		return nil, infraerrors.New(http.StatusServiceUnavailable, "OPENAI_MODELS_FETCH_UNAVAILABLE", "privacy client is not configured")
+	}
+
+	accessToken := account.GetCredential("access_token")
+	if accessToken == "" {
+		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_NO_ACCESS_TOKEN", "no access token available")
+	}
+
+	models := fetchChatGPTSupportedModels(ctx, s.privacyClientFactory, accessToken, s.resolveProxyURL(ctx, account))
+	if len(models) == 0 {
+		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_MODELS_FETCH_FAILED", "failed to fetch supported models")
+	}
+
+	return models, nil
+}
+
 // RefreshAccountToken refreshes token for an OpenAI OAuth account
 func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *Account) (*OpenAITokenInfo, error) {
 	if account.Platform != PlatformOpenAI {

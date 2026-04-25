@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,6 +95,7 @@ type ChatGPTAccountInfo struct {
 }
 
 const chatGPTAccountsCheckURL = "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27"
+const chatGPTCodexModelsURL = "https://chatgpt.com/backend-api/codex/models"
 
 // fetchChatGPTAccountInfo calls ChatGPT backend-api to get account info (plan_type, etc.).
 // Used as fallback when id_token doesn't contain these fields (e.g., Mobile RT).
@@ -236,4 +238,106 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + fmt.Sprintf("...(%d more)", len(s)-n)
+}
+
+// fetchChatGPTSupportedModels calls ChatGPT backend-api to get the OpenAI OAuth account's
+// currently visible model list. Returns nil on any failure (best-effort, non-blocking).
+func fetchChatGPTSupportedModels(ctx context.Context, clientFactory PrivacyClientFactory, accessToken, proxyURL string) []string {
+	if accessToken == "" || clientFactory == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	client, err := clientFactory(proxyURL)
+	if err != nil {
+		slog.Debug("chatgpt_supported_models_client_error", "error", err.Error())
+		return nil
+	}
+
+	var result any
+	resp, err := client.R().
+		SetContext(ctx).
+		SetHeader("Authorization", "Bearer "+accessToken).
+		SetHeader("Origin", "https://chatgpt.com").
+		SetHeader("Referer", "https://chatgpt.com/").
+		SetHeader("Accept", "application/json").
+		SetSuccessResult(&result).
+		Get(chatGPTCodexModelsURL)
+
+	if err != nil {
+		slog.Debug("chatgpt_supported_models_request_error", "error", err.Error())
+		return nil
+	}
+
+	if !resp.IsSuccessState() {
+		slog.Debug("chatgpt_supported_models_failed", "status", resp.StatusCode, "body", truncate(resp.String(), 200))
+		return nil
+	}
+
+	models := extractModelIDsFromPayload(result)
+	if len(models) == 0 {
+		slog.Debug("chatgpt_supported_models_empty", "body", truncate(resp.String(), 300))
+		return nil
+	}
+
+	slog.Info("chatgpt_supported_models_success", "count", len(models))
+	return models
+}
+
+func extractModelIDsFromPayload(payload any) []string {
+	seen := make(map[string]struct{})
+	visitModelCollection(payload, seen)
+	if len(seen) == 0 {
+		return nil
+	}
+
+	models := make([]string, 0, len(seen))
+	for modelID := range seen {
+		models = append(models, modelID)
+	}
+	sort.Strings(models)
+	return models
+}
+
+func visitModelCollection(value any, seen map[string]struct{}) {
+	switch v := value.(type) {
+	case map[string]any:
+		if id, ok := v["id"].(string); ok && looksLikeModelID(id) {
+			seen[strings.TrimSpace(id)] = struct{}{}
+		}
+		if slug, ok := v["slug"].(string); ok && looksLikeModelID(slug) {
+			seen[strings.TrimSpace(slug)] = struct{}{}
+		}
+		if name, ok := v["name"].(string); ok && looksLikeModelID(name) {
+			seen[strings.TrimSpace(name)] = struct{}{}
+		}
+
+		for _, key := range []string{"data", "models", "items", "categories"} {
+			if next, ok := v[key]; ok {
+				visitModelCollection(next, seen)
+			}
+		}
+	case []any:
+		for _, item := range v {
+			visitModelCollection(item, seen)
+		}
+	}
+}
+
+func looksLikeModelID(value string) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" || strings.Contains(trimmed, " ") {
+		return false
+	}
+	for _, prefix := range []string{
+		"gpt", "o1", "o3", "o4", "codex", "computer-use", "chatgpt", "omni", "text-embedding",
+		"text-moderation", "whisper", "tts", "dall", "image", "davinci", "babbage",
+	} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
 }
