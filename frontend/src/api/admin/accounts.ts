@@ -618,6 +618,20 @@ export async function batchRefresh(accountIds: number[]): Promise<BatchOperation
 }
 
 /**
+ * Batch fetch account info for OpenAI OAuth accounts
+ * @param accountIds - Array of account IDs
+ * @returns Batch operation result
+ */
+export async function batchFetchAccountInfo(accountIds: number[]): Promise<BatchOperationResult> {
+  const { data } = await apiClient.post<BatchOperationResult>('/admin/accounts/batch-fetch-account-info', {
+    account_ids: accountIds,
+  }, {
+    timeout: 120000
+  })
+  return data
+}
+
+/**
  * Set privacy for an Antigravity OAuth account
  * @param id - Account ID
  * @returns Updated account
@@ -663,6 +677,7 @@ export const accountsAPI = {
   getAntigravityDefaultModelMapping,
   batchClearError,
   batchRefresh,
+  batchFetchAccountInfo,
   setPrivacy
 }
 

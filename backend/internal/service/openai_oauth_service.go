@@ -252,6 +252,19 @@ func (s *OpenAIOAuthService) RefreshTokenWithClientID(ctx context.Context, refre
 	return tokenInfo, nil
 }
 
+func (s *OpenAIOAuthService) resolveProxyURL(ctx context.Context, account *Account) string {
+	if account == nil || account.ProxyID == nil {
+		return ""
+	}
+
+	proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
+	if err == nil && proxy != nil {
+		return proxy.URL()
+	}
+
+	return ""
+}
+
 // enrichTokenInfo 通过 ChatGPT backend-api 补全 tokenInfo 并设置隐私（best-effort）。
 // 从 accounts/check 获取最新 plan_type、subscription_expires_at、email，
 // 然后尝试关闭训练数据共享。适用于所有获取/刷新 token 的路径。
@@ -281,6 +294,65 @@ func (s *OpenAIOAuthService) enrichTokenInfo(ctx context.Context, tokenInfo *Ope
 
 	// 尝试设置隐私（关闭训练数据共享），best-effort
 	tokenInfo.PrivacyMode = disableOpenAITraining(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL)
+}
+
+// FetchAccountInfo uses the existing access_token to query ChatGPT account info
+// without refreshing OAuth credentials.
+func (s *OpenAIOAuthService) FetchAccountInfo(ctx context.Context, account *Account) (*OpenAITokenInfo, error) {
+	if account.Platform != PlatformOpenAI {
+		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT", "account is not an OpenAI account")
+	}
+	if account.Type != AccountTypeOAuth {
+		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT_TYPE", "account is not an OAuth account")
+	}
+
+	accessToken := account.GetCredential("access_token")
+	if accessToken == "" {
+		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_NO_ACCESS_TOKEN", "no access token available")
+	}
+
+	tokenInfo := &OpenAITokenInfo{
+		AccessToken:           accessToken,
+		RefreshToken:          account.GetCredential("refresh_token"),
+		IDToken:               account.GetCredential("id_token"),
+		ClientID:              account.GetCredential("client_id"),
+		Email:                 account.GetCredential("email"),
+		ChatGPTAccountID:      account.GetCredential("chatgpt_account_id"),
+		ChatGPTUserID:         account.GetCredential("chatgpt_user_id"),
+		OrganizationID:        account.GetCredential("organization_id"),
+		PlanType:              account.GetCredential("plan_type"),
+		SubscriptionExpiresAt: account.GetCredential("subscription_expires_at"),
+	}
+
+	if expiresAt := account.GetCredentialAsTime("expires_at"); expiresAt != nil {
+		tokenInfo.ExpiresAt = expiresAt.Unix()
+		tokenInfo.ExpiresIn = int64(time.Until(*expiresAt).Seconds())
+	}
+
+	proxyURL := s.resolveProxyURL(ctx, account)
+	orgID := tokenInfo.OrganizationID
+	if orgID == "" {
+		if atClaims, err := openai.DecodeIDToken(tokenInfo.AccessToken); err == nil && atClaims.OpenAIAuth != nil {
+			orgID = atClaims.OpenAIAuth.POID
+		}
+	}
+
+	info := fetchChatGPTAccountInfo(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL, orgID)
+	if info == nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_ACCOUNT_INFO_FETCH_FAILED", "failed to fetch account info")
+	}
+
+	if info.PlanType != "" {
+		tokenInfo.PlanType = info.PlanType
+	}
+	if info.SubscriptionExpiresAt != "" {
+		tokenInfo.SubscriptionExpiresAt = info.SubscriptionExpiresAt
+	}
+	if tokenInfo.Email == "" && info.Email != "" {
+		tokenInfo.Email = info.Email
+	}
+
+	return tokenInfo, nil
 }
 
 // RefreshAccountToken refreshes token for an OpenAI OAuth account
@@ -316,13 +388,7 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_NO_REFRESH_TOKEN", "no refresh token available")
 	}
 
-	var proxyURL string
-	if account.ProxyID != nil {
-		proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
-		if err == nil && proxy != nil {
-			proxyURL = proxy.URL()
-		}
-	}
+	proxyURL := s.resolveProxyURL(ctx, account)
 
 	clientID := account.GetCredential("client_id")
 	return s.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
@@ -330,11 +396,11 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 
 // BuildAccountCredentials builds credentials map from token info
 func (s *OpenAIOAuthService) BuildAccountCredentials(tokenInfo *OpenAITokenInfo) map[string]any {
-	expiresAt := time.Unix(tokenInfo.ExpiresAt, 0).Format(time.RFC3339)
-
 	creds := map[string]any{
 		"access_token": tokenInfo.AccessToken,
-		"expires_at":   expiresAt,
+	}
+	if tokenInfo.ExpiresAt > 0 {
+		creds["expires_at"] = time.Unix(tokenInfo.ExpiresAt, 0).Format(time.RFC3339)
 	}
 	// 仅在刷新响应返回了新的 refresh_token 时才更新，防止用空值覆盖已有令牌
 	if strings.TrimSpace(tokenInfo.RefreshToken) != "" {
