@@ -422,13 +422,18 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if testModelID == "" {
 		testModelID = openai.DefaultTestModel
 	}
+	originalRequestedModel := strings.TrimSpace(testModelID)
 
 	// Align test routing with gateway behavior: OpenAI accounts apply normal
 	// account model mapping, and compact mode applies compact-only mapping on top.
 	testModelID = account.GetMappedModel(testModelID)
 	if mode == AccountTestModeCompact {
 		testModelID = resolveOpenAICompactForwardModel(account, testModelID)
-		return s.testOpenAICompactConnection(c, account, testModelID)
+		if err := s.testOpenAICompactConnection(c, account, testModelID); err != nil {
+			return err
+		}
+		s.persistOpenAITestSuccessModel(ctx, account, originalRequestedModel)
+		return nil
 	}
 
 	// Determine authentication method and API URL
@@ -541,9 +546,17 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// Process SSE stream
 	if account.Type == "apikey" && account.IsOpenAIChatCompletionsCompatEnabled() {
-		return s.processOpenAIChatCompletionsStream(c, resp.Body)
+		if err := s.processOpenAIChatCompletionsStream(c, resp.Body); err != nil {
+			return err
+		}
+		s.persistOpenAITestSuccessModel(ctx, account, originalRequestedModel)
+		return nil
 	}
-	return s.processOpenAIStream(c, resp.Body)
+	if err := s.processOpenAIStream(c, resp.Body); err != nil {
+		return err
+	}
+	s.persistOpenAITestSuccessModel(ctx, account, originalRequestedModel)
+	return nil
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -692,6 +705,56 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 		account.Status = StatusActive
 		account.ErrorMessage = ""
 	}
+}
+
+func (s *AccountTestService) persistOpenAITestSuccessModel(ctx context.Context, account *Account, modelID string) {
+	modelID = strings.TrimSpace(modelID)
+	if s == nil || s.accountRepo == nil || account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
+		return
+	}
+	if modelID == "" || strings.Contains(strings.ToLower(modelID), "openai-compact") {
+		return
+	}
+
+	credentials := cloneCredentials(account.Credentials)
+	changed := false
+
+	supportedModels := account.GetSupportedModelsSnapshot()
+	if !stringSliceContainsExact(supportedModels, modelID) {
+		credentials["supported_models"] = append(normalizeSupportedModels(append(append([]string(nil), supportedModels...), modelID)), []string{}...)
+		credentials["supported_models_synced_at"] = time.Now().UTC().Format(time.RFC3339)
+		changed = true
+	}
+
+	mapping := account.GetModelMapping()
+	if !mappingSupportsRequestedModel(mapping, modelID) {
+		rawMapping := make(map[string]any, len(mapping)+1)
+		for key, value := range mapping {
+			rawMapping[key] = value
+		}
+		rawMapping[modelID] = modelID
+		credentials["model_mapping"] = rawMapping
+		changed = true
+	}
+
+	if !changed {
+		return
+	}
+
+	if err := persistAccountCredentials(ctx, s.accountRepo, account, credentials); err != nil {
+		log.Printf("[AccountTest] persist OpenAI successful test model failed for account %d model %s: %v", account.ID, modelID, err)
+		return
+	}
+}
+
+func stringSliceContainsExact(items []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, item := range items {
+		if strings.TrimSpace(item) == target {
+			return true
+		}
+	}
+	return false
 }
 
 // testGeminiAccountConnection tests a Gemini account's connection

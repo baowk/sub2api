@@ -186,21 +186,42 @@
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
           </template>
           <template #cell-platform_type="{ row }">
-            <div class="flex flex-wrap items-center gap-1">
-              <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
-              <span
-                v-if="getOpenAICompactLabel(row)"
-                :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getOpenAICompactClass(row)]"
-                :title="getOpenAICompactTitle(row)"
+            <div class="flex min-w-0 flex-col gap-1.5">
+              <div class="flex flex-wrap items-center gap-1">
+                <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
+                <span
+                  v-if="getOpenAICompactLabel(row)"
+                  :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getOpenAICompactClass(row)]"
+                  :title="getOpenAICompactTitle(row)"
+                >
+                  {{ getOpenAICompactLabel(row) }}
+                </span>
+                <span
+                  v-if="getAntigravityTierLabel(row)"
+                  :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
+                >
+                  {{ getAntigravityTierLabel(row) }}
+                </span>
+              </div>
+              <div
+                v-if="getAccountModelPreview(row).length > 0"
+                class="flex max-w-[260px] flex-wrap items-center gap-1"
+                :title="getAccountModelsTooltip(row)"
               >
-                {{ getOpenAICompactLabel(row) }}
-              </span>
-              <span
-                v-if="getAntigravityTierLabel(row)"
-                :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
-              >
-                {{ getAntigravityTierLabel(row) }}
-              </span>
+                <span
+                  v-for="model in getAccountModelPreview(row)"
+                  :key="model"
+                  class="inline-flex max-w-[120px] items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-slate-700 dark:bg-dark-600 dark:text-dark-200"
+                >
+                  <span class="truncate">{{ model }}</span>
+                </span>
+                <span
+                  v-if="getAccountHiddenModelCount(row) > 0"
+                  class="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-slate-500 dark:bg-dark-700 dark:text-dark-300"
+                >
+                  +{{ getAccountHiddenModelCount(row) }}
+                </span>
+              </div>
             </div>
           </template>
           <template #cell-capacity="{ row }">
@@ -300,7 +321,7 @@
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @sync-plan="handleSyncPlan" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal :show="showBulkEdit" :account-ids="selIds" :selected-platforms="selPlatforms" :selected-types="selTypes" :proxies="proxies" :groups="groups" @close="showBulkEdit = false" @updated="handleBulkUpdated" />
@@ -976,6 +997,39 @@ function getOpenAICompactTitle(row: any): string {
   return `${getOpenAICompactLabel(row)} | ${t('admin.accounts.openai.compactLastChecked')}: ${formatDateTime(new Date(checkedAt))}`
 }
 
+function getAccountConfiguredModels(row: Account): string[] {
+  const credentials = row.credentials as Record<string, unknown> | undefined
+  if (!credentials) return []
+
+  const rawSupported = credentials.supported_models
+  const supported = Array.isArray(rawSupported)
+    ? rawSupported.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
+    : []
+
+  const rawMapping = credentials.model_mapping
+  const mappingKeys = rawMapping && typeof rawMapping === 'object' && !Array.isArray(rawMapping)
+    ? Object.keys(rawMapping as Record<string, unknown>).map((item) => item.trim()).filter(Boolean)
+    : []
+
+  const merged = [...new Set([...supported, ...mappingKeys])]
+  return merged.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+}
+
+function getAccountModelPreview(row: Account): string[] {
+  const models = getAccountConfiguredModels(row)
+  return models.slice(-2).reverse()
+}
+
+function getAccountHiddenModelCount(row: Account): number {
+  const total = getAccountConfiguredModels(row).length
+  return Math.max(0, total - 2)
+}
+
+function getAccountModelsTooltip(row: Account): string {
+  const models = getAccountConfiguredModels(row)
+  return models.join('\n')
+}
+
 function getAntigravityTierClass(row: any): string {
   const tier = getAntigravityTierFromRow(row)
   switch (tier) {
@@ -1399,6 +1453,17 @@ const handleRefresh = async (a: Account) => {
     enterAutoRefreshSilentWindow()
   } catch (error) {
     console.error('Failed to refresh credentials:', error)
+  }
+}
+const handleSyncPlan = async (a: Account) => {
+  try {
+    const updated = await adminAPI.accounts.fetchAccountInfo(a.id, 'plan')
+    patchAccountInList(updated)
+    enterAutoRefreshSilentWindow()
+    appStore.showSuccess(t('admin.accounts.syncPlanSuccess'))
+  } catch (error: any) {
+    console.error('Failed to sync plan:', error)
+    appStore.showError(error?.response?.data?.message || t('admin.accounts.syncPlanFailed'))
   }
 }
 const handleRecoverState = async (a: Account) => {

@@ -77,9 +77,13 @@ func TestResolveOpenAIForwardModel(t *testing.T) {
 			expectedModel:      "gpt-5.3-codex-spark",
 		},
 		{
-			name: "preserves gpt-5.5 instead of group default",
+			name: "preserves gpt-5.5 when account still advertises it",
 			account: &Account{
-				Credentials: map[string]any{},
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"supported_models": []any{"gpt-5.4", "gpt-5.5"},
+				},
 			},
 			requestedModel:     "gpt-5.5",
 			defaultMappedModel: "gpt-5.4",
@@ -102,6 +106,32 @@ func TestResolveOpenAIForwardModel(t *testing.T) {
 			requestedModel:     "gpt-5.5-openai-compact",
 			defaultMappedModel: "gpt-5.4",
 			expectedModel:      "gpt-5.5-openai-compact",
+		},
+		{
+			name: "falls back to gpt-5.4 when oauth account no longer advertises gpt-5.5",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"supported_models": []any{"gpt-5.4"},
+				},
+			},
+			requestedModel:     "gpt-5.5",
+			defaultMappedModel: "gpt-5.4",
+			expectedModel:      "gpt-5.4",
+		},
+		{
+			name: "falls back to compact gpt-5.4 when oauth account no longer advertises compact gpt-5.5",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-5.4-openai-compact": "gpt-5.4-openai-compact"},
+				},
+			},
+			requestedModel:     "gpt-5.5-openai-compact",
+			defaultMappedModel: "gpt-5.4",
+			expectedModel:      "gpt-5.4-openai-compact",
 		},
 	}
 

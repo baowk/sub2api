@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -118,6 +119,27 @@ func buildOpenAIModelsFromIDs(modelIDs []string) []openai.Model {
 		}
 	}
 	return models
+}
+
+type openAIAccountInfoFetchMode string
+
+const (
+	openAIAccountInfoFetchModeAll    openAIAccountInfoFetchMode = "all"
+	openAIAccountInfoFetchModePlan   openAIAccountInfoFetchMode = "plan"
+	openAIAccountInfoFetchModeModels openAIAccountInfoFetchMode = "models"
+)
+
+func normalizeOpenAIAccountInfoFetchMode(raw string) openAIAccountInfoFetchMode {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "all":
+		return openAIAccountInfoFetchModeAll
+	case "plan":
+		return openAIAccountInfoFetchModePlan
+	case "models":
+		return openAIAccountInfoFetchModeModels
+	default:
+		return ""
+	}
 }
 
 // CreateAccountRequest represents create account request
@@ -1246,33 +1268,7 @@ func (h *AccountHandler) BatchFetchAccountInfo(c *gin.Context) {
 				return nil
 			}
 
-			newCredentials := make(map[string]any, len(acc.Credentials))
-			for k, v := range acc.Credentials {
-				newCredentials[k] = v
-			}
-
-			var detailErrors []string
-			fetchedAny := false
-
-			tokenInfo, infoErr := h.openaiOAuthService.FetchAccountInfo(gctx, acc)
-			if infoErr != nil {
-				detailErrors = append(detailErrors, "plan_type: "+infoErr.Error())
-			} else {
-				for k, v := range h.openaiOAuthService.BuildAccountCredentials(tokenInfo) {
-					newCredentials[k] = v
-				}
-				fetchedAny = true
-			}
-
-			supportedModels, modelsErr := h.openaiOAuthService.FetchSupportedModels(gctx, acc)
-			if modelsErr != nil {
-				detailErrors = append(detailErrors, "supported_models: "+modelsErr.Error())
-			} else if len(supportedModels) > 0 {
-				newCredentials["supported_models"] = supportedModels
-				newCredentials["supported_models_synced_at"] = time.Now().UTC().Format(time.RFC3339)
-				fetchedAny = true
-			}
-
+			newCredentials, fetchedAny, detailErrors := h.fetchOpenAIAccountInfoCredentials(gctx, acc, openAIAccountInfoFetchModeAll)
 			if !fetchedAny {
 				mu.Lock()
 				failedCount++
@@ -1322,6 +1318,96 @@ func (h *AccountHandler) BatchFetchAccountInfo(c *gin.Context) {
 		"errors":   errors,
 		"warnings": warnings,
 	})
+}
+
+// FetchAccountInfo handles syncing plan/model info for a single OpenAI OAuth account.
+// POST /api/v1/admin/accounts/:id/fetch-account-info
+func (h *AccountHandler) FetchAccountInfo(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	mode := normalizeOpenAIAccountInfoFetchMode(req.Mode)
+	if mode == "" {
+		response.BadRequest(c, "Invalid mode")
+		return
+	}
+
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.NotFound(c, "Account not found")
+		return
+	}
+	if !account.IsOpenAIOAuth() {
+		response.BadRequest(c, "only openai oauth accounts support account info fetch")
+		return
+	}
+
+	newCredentials, fetchedAny, detailErrors := h.fetchOpenAIAccountInfoCredentials(c.Request.Context(), account, mode)
+	if !fetchedAny {
+		response.Error(c, http.StatusBadGateway, strings.Join(detailErrors, "; "))
+		return
+	}
+
+	if _, err := h.adminService.UpdateAccount(c.Request.Context(), account.ID, &service.UpdateAccountInput{
+		Credentials: newCredentials,
+	}); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	updated, err := h.adminService.GetAccount(c.Request.Context(), account.ID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), updated))
+}
+
+func (h *AccountHandler) fetchOpenAIAccountInfoCredentials(ctx context.Context, account *service.Account, mode openAIAccountInfoFetchMode) (map[string]any, bool, []string) {
+	newCredentials := make(map[string]any, len(account.Credentials))
+	for k, v := range account.Credentials {
+		newCredentials[k] = v
+	}
+
+	var detailErrors []string
+	fetchedAny := false
+
+	if mode == openAIAccountInfoFetchModeAll || mode == openAIAccountInfoFetchModePlan {
+		tokenInfo, infoErr := h.openaiOAuthService.FetchAccountInfo(ctx, account)
+		if infoErr != nil {
+			detailErrors = append(detailErrors, "plan_type: "+infoErr.Error())
+		} else {
+			for k, v := range h.openaiOAuthService.BuildAccountCredentials(tokenInfo) {
+				newCredentials[k] = v
+			}
+			fetchedAny = true
+		}
+	}
+
+	if mode == openAIAccountInfoFetchModeAll || mode == openAIAccountInfoFetchModeModels {
+		supportedModels, modelsErr := h.openaiOAuthService.FetchSupportedModels(ctx, account)
+		if modelsErr != nil {
+			detailErrors = append(detailErrors, "supported_models: "+modelsErr.Error())
+		} else if len(supportedModels) > 0 {
+			newCredentials["supported_models"] = supportedModels
+			newCredentials["supported_models_synced_at"] = time.Now().UTC().Format(time.RFC3339)
+			fetchedAny = true
+		}
+	}
+
+	return newCredentials, fetchedAny, detailErrors
 }
 
 // BatchCreate handles batch creating accounts

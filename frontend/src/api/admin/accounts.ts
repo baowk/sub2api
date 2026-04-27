@@ -591,6 +591,8 @@ export interface BatchOperationResult {
   warnings?: Array<{ account_id: number; warning: string }>
 }
 
+export type OpenAIAccountInfoFetchMode = 'all' | 'plan' | 'models'
+
 /**
  * Batch clear account errors
  * @param accountIds - Array of account IDs
@@ -626,6 +628,16 @@ export async function batchFetchAccountInfo(accountIds: number[]): Promise<Batch
   const { data } = await apiClient.post<BatchOperationResult>('/admin/accounts/batch-fetch-account-info', {
     account_ids: accountIds,
   }, {
+    timeout: 120000
+  })
+  return data
+}
+
+export async function fetchAccountInfo(
+  id: number,
+  mode: OpenAIAccountInfoFetchMode = 'all'
+): Promise<Account> {
+  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/fetch-account-info`, { mode }, {
     timeout: 120000
   })
   return data
@@ -678,6 +690,7 @@ export const accountsAPI = {
   batchClearError,
   batchRefresh,
   batchFetchAccountInfo,
+  fetchAccountInfo,
   setPrivacy
 }
 

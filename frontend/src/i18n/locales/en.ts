@@ -2637,6 +2637,9 @@ export default {
       privacyAntigravitySet: 'Telemetry and marketing emails disabled',
       privacyAntigravityFailed: 'Privacy setting failed',
       setPrivacy: 'Set Privacy',
+      syncPlan: 'Sync Plan',
+      syncPlanSuccess: 'Plan info synced',
+      syncPlanFailed: 'Failed to sync plan info',
       subscriptionAbnormal: 'Abnormal',
       subscriptionExpires: 'Expires',
       // Capacity status tooltips

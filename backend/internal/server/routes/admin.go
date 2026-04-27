@@ -273,6 +273,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.POST("/:id/refresh", h.Admin.Account.Refresh)
 		accounts.POST("/:id/set-privacy", h.Admin.Account.SetPrivacy)
 		accounts.POST("/:id/refresh-tier", h.Admin.Account.RefreshTier)
+		accounts.POST("/:id/fetch-account-info", h.Admin.Account.FetchAccountInfo)
 		accounts.GET("/:id/stats", h.Admin.Account.GetStats)
 		accounts.POST("/:id/clear-error", h.Admin.Account.ClearError)
 		accounts.GET("/:id/usage", h.Admin.Account.GetUsage)
