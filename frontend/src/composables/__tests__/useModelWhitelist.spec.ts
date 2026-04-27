@@ -7,23 +7,26 @@ vi.mock('@/api/admin/accounts', () => ({
 import { buildModelMappingObject, getModelsByPlatform } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
-  it('openai 模型列表包含 GPT-5.4 官方快照', () => {
+  it('openai 模型列表包含 GPT-5.5 与 GPT-5.4 官方快照', () => {
     const models = getModelsByPlatform('openai')
 
+    expect(models).toContain('gpt-5.5')
+    expect(models[0]).toBe('gpt-5.5')
     expect(models).toContain('gpt-5.4')
     expect(models).toContain('gpt-5.4-mini')
     expect(models).toContain('gpt-5.4-2026-03-05')
   })
 
-  it('openai 模型列表不再暴露已下线的 ChatGPT 登录 Codex 模型', () => {
+  it('openai 模型列表不再暴露 GPT-5 之前的旧模型', () => {
     const models = getModelsByPlatform('openai')
 
-    expect(models).not.toContain('gpt-5')
-    expect(models).not.toContain('gpt-5.1')
-    expect(models).not.toContain('gpt-5.1-codex')
-    expect(models).not.toContain('gpt-5.1-codex-max')
-    expect(models).not.toContain('gpt-5.1-codex-mini')
-    expect(models).not.toContain('gpt-5.2-codex')
+    expect(models).not.toContain('gpt-4.1')
+    expect(models).not.toContain('gpt-4o')
+    expect(models).not.toContain('gpt-4o-mini')
+    expect(models).not.toContain('gpt-4.5-preview')
+    expect(models).not.toContain('o1')
+    expect(models).not.toContain('o3')
+    expect(models).not.toContain('o4-mini')
   })
 
   it('antigravity 模型列表包含图片模型兼容项', () => {

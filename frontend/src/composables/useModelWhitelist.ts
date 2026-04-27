@@ -4,26 +4,21 @@
 
 // OpenAI
 const openaiModels = [
-  // Legacy pre-GPT-5.2 OpenAI models are intentionally hidden to keep the
-  // admin model picker focused on current models.
-  // 'gpt-3.5-turbo', 'gpt-3.5-turbo-0125', 'gpt-3.5-turbo-1106', 'gpt-3.5-turbo-16k',
-  // 'gpt-4', 'gpt-4-turbo', 'gpt-4-turbo-preview',
-  // 'gpt-4o', 'gpt-4o-2024-08-06', 'gpt-4o-2024-11-20',
-  // 'gpt-4o-mini', 'gpt-4o-mini-2024-07-18',
-  // 'gpt-4.5-preview',
-  // 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano',
-  // 'o1', 'o1-preview', 'o1-mini', 'o1-pro',
-  // 'o3', 'o3-mini', 'o3-pro',
-  // 'o4-mini',
-  // GPT-5.2 系列
+  // Keep the admin model picker focused on GPT-5-era OpenAI models only.
+  'gpt-5.5',
+  'gpt-5', 'gpt-5-chat', 'gpt-5-chat-latest',
+  'gpt-5-mini', 'gpt-5-nano', 'gpt-5-pro',
+  'gpt-5-2025-08-07', 'gpt-5-mini-2025-08-07', 'gpt-5-nano-2025-08-07',
+  'gpt-5-pro-2025-10-06',
+  // GPT-5.1 系列
+  'gpt-5.1', 'gpt-5.1-chat-latest', 'gpt-5.1-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini',
+  'gpt-5.1-2025-11-13',
   'gpt-5.2', 'gpt-5.2-2025-12-11', 'gpt-5.2-chat-latest',
-  'gpt-5.2-pro', 'gpt-5.2-pro-2025-12-11',
-  // GPT-5.4 系列
-  'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-2026-03-05',
+  'gpt-5.2-codex', 'gpt-5.2-pro', 'gpt-5.2-pro-2025-12-11',
   // GPT-5.3 系列
   'gpt-5.3-codex', 'gpt-5.3-codex-spark',
-  // 'chatgpt-4o-latest',
-  // 'gpt-4o-audio-preview', 'gpt-4o-realtime-preview'
+  // GPT-5.4 / 5.5
+  'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4-2026-03-05',
 ]
 
 // Anthropic Claude
@@ -253,14 +248,13 @@ const anthropicPresetMappings = [
 ]
 
 const openaiPresetMappings = [
-  { label: 'GPT-4o', from: 'gpt-4o', to: 'gpt-4o', color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400' },
-  { label: 'GPT-4o Mini', from: 'gpt-4o-mini', to: 'gpt-4o-mini', color: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400' },
-  { label: 'GPT-4.1', from: 'gpt-4.1', to: 'gpt-4.1', color: 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400' },
-  { label: 'o1', from: 'o1', to: 'o1', color: 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400' },
-  { label: 'o3', from: 'o3', to: 'o3', color: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400' },
-  { label: 'GPT-5.3 Codex Spark', from: 'gpt-5.3-codex-spark', to: 'gpt-5.3-codex-spark', color: 'bg-teal-100 text-teal-700 hover:bg-teal-200 dark:bg-teal-900/30 dark:text-teal-400' },
+  { label: 'GPT-5', from: 'gpt-5', to: 'gpt-5', color: 'bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-400' },
+  { label: 'GPT-5 Mini', from: 'gpt-5-mini', to: 'gpt-5-mini', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },
+  { label: 'GPT-5.1 Codex', from: 'gpt-5.1-codex', to: 'gpt-5.1-codex', color: 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400' },
   { label: 'GPT-5.2', from: 'gpt-5.2', to: 'gpt-5.2', color: 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400' },
+  { label: 'GPT-5.3 Codex Spark', from: 'gpt-5.3-codex-spark', to: 'gpt-5.3-codex-spark', color: 'bg-teal-100 text-teal-700 hover:bg-teal-200 dark:bg-teal-900/30 dark:text-teal-400' },
   { label: 'GPT-5.4', from: 'gpt-5.4', to: 'gpt-5.4', color: 'bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-900/30 dark:text-rose-400' },
+  { label: 'GPT-5.5', from: 'gpt-5.5', to: 'gpt-5.5', color: 'bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-200 dark:bg-fuchsia-900/30 dark:text-fuchsia-400' },
   { label: 'Haiku→5.4', from: 'claude-haiku-4-5-20251001', to: 'gpt-5.4', color: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400' },
   { label: 'Opus→5.4', from: 'claude-opus-4-6', to: 'gpt-5.4', color: 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400' },
   { label: 'Sonnet→5.4', from: 'claude-sonnet-4-6', to: 'gpt-5.4', color: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400' }

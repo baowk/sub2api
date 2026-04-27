@@ -139,6 +139,21 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
+              <div
+                v-if="needsOpenAIWhitelistUpgrade"
+                class="mb-3 flex items-center justify-between rounded-lg bg-sky-50 px-3 py-2 dark:bg-sky-900/20"
+              >
+                <p class="pr-3 text-xs text-sky-700 dark:text-sky-300">
+                  {{ t('admin.accounts.openaiWhitelistUpgradeHint') }}
+                </p>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-lg bg-sky-100 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:hover:bg-sky-900/60"
+                  @click="syncOpenAIWhitelistToLatest"
+                >
+                  {{ t('admin.accounts.openaiWhitelistUpgradeAction') }}
+                </button>
+              </div>
               <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
@@ -454,6 +469,21 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
+            <div
+              v-if="needsOpenAIWhitelistUpgrade"
+              class="mb-3 flex items-center justify-between rounded-lg bg-sky-50 px-3 py-2 dark:bg-sky-900/20"
+            >
+              <p class="pr-3 text-xs text-sky-700 dark:text-sky-300">
+                {{ t('admin.accounts.openaiWhitelistUpgradeHint') }}
+              </p>
+              <button
+                type="button"
+                class="shrink-0 rounded-lg bg-sky-100 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:hover:bg-sky-900/60"
+                @click="syncOpenAIWhitelistToLatest"
+              >
+                {{ t('admin.accounts.openaiWhitelistUpgradeAction') }}
+              </button>
+            </div>
             <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
@@ -1959,6 +1989,7 @@ import {
 } from '@/utils/openaiWsMode'
 import {
   getPresetMappingsByPlatform,
+  getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
   isValidWildcardPattern
@@ -2141,9 +2172,19 @@ const openAICompactModeOptions = computed(() => [
   { value: 'force_on', label: t('admin.accounts.openai.compactModeForceOn') },
   { value: 'force_off', label: t('admin.accounts.openai.compactModeForceOff') }
 ])
+const latestOpenAIWhitelistModels = computed(() => getModelsByPlatform('openai'))
 const isOpenAIModelRestrictionDisabled = computed(() =>
   props.account?.platform === 'openai' && openaiPassthroughEnabled.value
 )
+const needsOpenAIWhitelistUpgrade = computed(() => {
+  if (props.account?.platform !== 'openai' || modelRestrictionMode.value !== 'whitelist') {
+    return false
+  }
+  if (allowedModels.value.length === 0) {
+    return false
+  }
+  return latestOpenAIWhitelistModels.value.some((model) => !allowedModels.value.includes(model))
+})
 const openAICompactStatusKey = computed(() => {
   const extra = props.account?.extra as Record<string, unknown> | undefined
   if (!props.account || props.account.platform !== 'openai') return ''
@@ -2551,14 +2592,25 @@ async function loadTLSProfiles() {
   }
 }
 
+async function refreshAccountFromServer(account: Account) {
+  try {
+    const latest = await adminAPI.accounts.getById(account.id)
+    Object.assign(account, latest)
+    syncFormFromAccount(account)
+  } catch (error) {
+    console.error('Failed to refresh account before editing:', error)
+    syncFormFromAccount(account)
+  }
+}
+
 watch(
   [() => props.show, () => props.account],
-  ([show, newAccount], [wasShow, previousAccount]) => {
+  async ([show, newAccount], [wasShow, previousAccount]) => {
     if (!show || !newAccount) {
       return
     }
     if (!wasShow || newAccount !== previousAccount) {
-      syncFormFromAccount(newAccount)
+      await refreshAccountFromServer(newAccount)
       loadTLSProfiles()
     }
   },
@@ -2855,6 +2907,14 @@ const splitTempUnschedKeywords = (value: string) => {
     .split(/[,;]/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
+}
+
+const syncOpenAIWhitelistToLatest = () => {
+  allowedModels.value = [
+    ...latestOpenAIWhitelistModels.value,
+    ...allowedModels.value.filter((model) => !latestOpenAIWhitelistModels.value.includes(model))
+  ]
+  appStore.showSuccess(t('admin.accounts.openaiWhitelistSynced'))
 }
 
 function toPositiveNumber(value: unknown) {

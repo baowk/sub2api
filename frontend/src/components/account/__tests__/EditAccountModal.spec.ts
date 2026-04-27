@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, getAccountByIdMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
-  checkMixedChannelRiskMock: vi.fn()
+  checkMixedChannelRiskMock: vi.fn(),
+  getAccountByIdMock: vi.fn()
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -24,6 +25,7 @@ vi.mock('@/stores/auth', () => ({
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
+      getById: getAccountByIdMock,
       update: updateAccountMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock
     },
@@ -165,6 +167,8 @@ function mountModal(account = buildAccount()) {
 describe('EditAccountModal', () => {
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
+    getAccountByIdMock.mockReset()
+    getAccountByIdMock.mockResolvedValue(account)
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset()
     checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
@@ -192,6 +196,8 @@ describe('EditAccountModal', () => {
 
   it('submits OpenAI compact mode and compact-only model mapping', async () => {
     const account = buildAccount()
+    getAccountByIdMock.mockReset()
+    getAccountByIdMock.mockResolvedValue(account)
     account.extra = {
       openai_compact_mode: 'force_on'
     }
@@ -215,5 +221,31 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.compact_model_mapping).toEqual({
       'gpt-5.4': 'gpt-5.4-openai-compact'
     })
+  })
+
+  it('refreshes the account from getById before editing so latest whitelist is shown', async () => {
+    const staleAccount = buildAccount()
+    const freshAccount = {
+      ...buildAccount(),
+      credentials: {
+        model_mapping: {
+          'gpt-5.5': 'gpt-5.5',
+          'gpt-5.2': 'gpt-5.2'
+        }
+      }
+    }
+    getAccountByIdMock.mockReset()
+    getAccountByIdMock.mockResolvedValue(freshAccount)
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(freshAccount)
+
+    const wrapper = mountModal(staleAccount)
+
+    await vi.dynamicImportSettled()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toContain('gpt-5.5')
   })
 })
