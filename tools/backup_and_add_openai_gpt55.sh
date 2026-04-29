@@ -7,9 +7,9 @@ CONFIG_FILE="${CONFIG_FILE:-${ROOT_DIR}/backend/config.yaml}"
 BACKUP_DIR="${BACKUP_DIR:-${ROOT_DIR}/backups/db}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 
-REMOTE_HOST="${REMOTE_HOST:-47.251.68.126}"
+REMOTE_HOST="${REMOTE_HOST:-}"
 REMOTE_PORT="${REMOTE_PORT:-22}"
-REMOTE_USER="${REMOTE_USER:-root}"
+REMOTE_USER="${REMOTE_USER:-}"
 REMOTE_PASS="${REMOTE_PASS:-}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/opt/sub2api}"
 REMOTE_CONFIG_FILE="${REMOTE_CONFIG_FILE:-${REMOTE_APP_DIR}/config.yaml}"
@@ -32,9 +32,9 @@ Behavior:
     gpt-5.5 to every persisted OpenAI account model_mapping that lacks it.
 
   --remote-prod
-    Connect to the production host, create a production database dump there,
-    copy that dump back to the local backups/db directory, then update the
-    production database in place. Requires REMOTE_PASS in the environment.
+    Connect to the remote host, create a database dump there, copy that dump
+    back to the local backups/db directory, then update the remote database in
+    place. Requires REMOTE_HOST, REMOTE_USER, and REMOTE_PASS in the environment.
 EOF
 }
 
@@ -240,6 +240,14 @@ run_remote_prod() {
   require_cmd expect
   require_cmd scp
 
+  if [[ -z "${REMOTE_HOST}" ]]; then
+    echo "REMOTE_HOST is required for --remote-prod" >&2
+    exit 1
+  fi
+  if [[ -z "${REMOTE_USER}" ]]; then
+    echo "REMOTE_USER is required for --remote-prod" >&2
+    exit 1
+  fi
   if [[ -z "${REMOTE_PASS}" ]]; then
     echo "REMOTE_PASS is required for --remote-prod" >&2
     exit 1
