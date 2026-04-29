@@ -2090,6 +2090,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		Status:      StatusActive,
 		Schedulable: true,
 	}
+	applyDefaultOpenAICompactSupport(account)
 	// 预计算固定时间重置的下次重置时间
 	if account.Extra != nil {
 		if err := ValidateQuotaResetConfig(account.Extra); err != nil {
@@ -2155,6 +2156,18 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	}
 
 	return account, nil
+}
+
+func applyDefaultOpenAICompactSupport(account *Account) {
+	if account == nil || !account.IsOpenAI() || (account.Type != AccountTypeOAuth && account.Type != AccountTypeAPIKey) {
+		return
+	}
+	if account.Extra == nil {
+		account.Extra = map[string]any{}
+	}
+	if _, exists := account.Extra["openai_compact_supported"]; !exists {
+		account.Extra["openai_compact_supported"] = true
+	}
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {

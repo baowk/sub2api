@@ -141,7 +141,7 @@
         </div>
       </template>
       <template #table>
-        <AccountBulkActionsBar :selected-ids="selIds" @delete="handleBulkDelete" @reset-status="handleBulkResetStatus" @fetch-account-info="handleBulkFetchAccountInfo" @refresh-token="handleBulkRefreshToken" @edit="showBulkEdit = true" @clear="clearSelection" @select-page="selectPage" @toggle-schedulable="handleBulkToggleSchedulable" />
+        <AccountBulkActionsBar :selected-ids="selIds" @delete="handleBulkDelete" @reset-status="handleBulkResetStatus" @fetch-account-info="handleBulkFetchAccountInfo" @compact-support="handleBulkCompactSupport" @refresh-token="handleBulkRefreshToken" @edit="showBulkEdit = true" @clear="clearSelection" @select-page="selectPage" @toggle-schedulable="handleBulkToggleSchedulable" />
         <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DataTable
           ref="dataTableRef"
@@ -189,6 +189,8 @@
             <div class="flex min-w-0 flex-col gap-1.5">
               <div class="flex flex-wrap items-center gap-1">
                 <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
+              </div>
+              <div class="flex flex-col items-start gap-1">
                 <span
                   v-if="getOpenAICompactLabel(row)"
                   :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getOpenAICompactClass(row)]"
@@ -202,25 +204,25 @@
                 >
                   {{ getAntigravityTierLabel(row) }}
                 </span>
-              </div>
-              <div
-                v-if="getAccountModelPreview(row).length > 0"
-                class="flex max-w-[260px] flex-wrap items-center gap-1"
-                :title="getAccountModelsTooltip(row)"
-              >
-                <span
-                  v-for="model in getAccountModelPreview(row)"
-                  :key="model"
-                  class="inline-flex max-w-[120px] items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-slate-700 dark:bg-dark-600 dark:text-dark-200"
+                <div
+                  v-if="getAccountModelPreview(row).length > 0"
+                  class="flex max-w-[260px] flex-wrap items-center gap-1"
+                  :title="getAccountModelsTooltip(row)"
                 >
-                  <span class="truncate">{{ model }}</span>
-                </span>
-                <span
-                  v-if="getAccountHiddenModelCount(row) > 0"
-                  class="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-slate-500 dark:bg-dark-700 dark:text-dark-300"
-                >
-                  +{{ getAccountHiddenModelCount(row) }}
-                </span>
+                  <span
+                    v-for="model in getAccountModelPreview(row)"
+                    :key="model"
+                    class="inline-flex max-w-[120px] items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-slate-700 dark:bg-dark-600 dark:text-dark-200"
+                  >
+                    <span class="truncate">{{ model }}</span>
+                  </span>
+                  <span
+                    v-if="getAccountHiddenModelCount(row) > 0"
+                    class="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-slate-500 dark:bg-dark-700 dark:text-dark-300"
+                  >
+                    +{{ getAccountHiddenModelCount(row) }}
+                  </span>
+                </div>
               </div>
             </div>
           </template>
@@ -318,7 +320,7 @@
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
-    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
+    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" @tested="handleAccountTested" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @sync-plan="handleSyncPlan" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" />
@@ -1193,6 +1195,22 @@ const handleBulkFetchAccountInfo = async () => {
     appStore.showError(String(error))
   }
 }
+const handleBulkCompactSupport = async () => {
+  if (!confirm(t('common.confirm'))) return
+  try {
+    const result = await adminAPI.accounts.batchCompactSupport(selIds.value)
+    if (result.failed > 0) {
+      appStore.showError(t('admin.accounts.bulkActions.compactSupportPartial', { success: result.success, failed: result.failed }))
+    } else {
+      appStore.showSuccess(t('admin.accounts.bulkActions.compactSupportSuccess', { count: result.success }))
+      clearSelection()
+    }
+    await load()
+  } catch (error) {
+    console.error('Failed to bulk mark compact support:', error)
+    appStore.showError(String(error))
+  }
+}
 const handleBulkRefreshToken = async () => {
   if (!confirm(t('common.confirm'))) return
   try {
@@ -1466,6 +1484,15 @@ const handleExportData = async () => {
   }
 }
 const closeTestModal = () => { showTest.value = false; testingAcc.value = null }
+const handleAccountTested = async (accountId: number) => {
+  try {
+    const updatedAccount = await adminAPI.accounts.getById(accountId)
+    patchAccountInList(updatedAccount)
+    enterAutoRefreshSilentWindow()
+  } catch (error) {
+    console.error('Failed to refresh tested account:', error)
+  }
+}
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
 const handleTest = (a: Account) => { testingAcc.value = a; showTest.value = true }

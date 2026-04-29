@@ -2774,9 +2774,12 @@ export default {
         disableScheduling: 'Disable Scheduling',
         resetStatus: 'Reset Status',
         fetchAccountInfo: 'Sync Plan & Models',
+        compactSupport: 'Mark Compact Supported',
         refreshToken: 'Refresh Token',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         fetchAccountInfoSuccess: 'Successfully synced plan and models for {count} account(s)',
+        compactSupportSuccess: 'Marked {count} account(s) as Compact supported',
+        compactSupportPartial: 'Compact marking partially completed: {success} succeeded, {failed} failed',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
         partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
       },

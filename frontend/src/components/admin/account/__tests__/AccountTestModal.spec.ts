@@ -176,5 +176,6 @@ describe('AccountTestModal', () => {
       prompt: '',
       mode: 'compact'
     })
+    expect(wrapper.emitted('tested')?.[0]).toEqual([42])
   })
 })

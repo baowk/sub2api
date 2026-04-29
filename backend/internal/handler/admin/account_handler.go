@@ -705,6 +705,11 @@ type TestAccountRequest struct {
 	Mode    string `json:"mode"`
 }
 
+type BatchCompactSupportRequest struct {
+	AccountIDs []int64 `json:"account_ids"`
+	Supported  *bool   `json:"supported"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -743,6 +748,110 @@ func (h *AccountHandler) Test(c *gin.Context) {
 			_ = c.Error(err)
 		}
 	}
+}
+
+// BatchCompactSupport handles batch marking OpenAI /responses/compact capability.
+// POST /api/v1/admin/accounts/batch-compact-support
+func (h *AccountHandler) BatchCompactSupport(c *gin.Context) {
+	var req BatchCompactSupportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if len(req.AccountIDs) == 0 {
+		response.BadRequest(c, "account_ids is required")
+		return
+	}
+
+	ctx := c.Request.Context()
+	accounts, err := h.adminService.GetAccountsByIDs(ctx, req.AccountIDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	foundIDs := make(map[int64]bool, len(accounts))
+	for _, acc := range accounts {
+		if acc != nil {
+			foundIDs[acc.ID] = true
+		}
+	}
+
+	supported := true
+	if req.Supported != nil {
+		supported = *req.Supported
+	}
+
+	const maxConcurrency = 10
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrency)
+
+	var mu sync.Mutex
+	var successCount, failedCount int
+	var errors []gin.H
+
+	for _, id := range req.AccountIDs {
+		if !foundIDs[id] {
+			failedCount++
+			errors = append(errors, gin.H{
+				"account_id": id,
+				"error":      "account not found",
+			})
+		}
+	}
+
+	for _, account := range accounts {
+		acc := account
+		if acc == nil {
+			continue
+		}
+
+		g.Go(func() error {
+			if !acc.IsOpenAI() || (!acc.IsOAuth() && acc.Type != service.AccountTypeAPIKey) {
+				mu.Lock()
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      "only openai oauth and api key accounts support compact probe",
+				})
+				mu.Unlock()
+				return nil
+			}
+
+			_, err := h.adminService.UpdateAccount(gctx, acc.ID, &service.UpdateAccountInput{
+				Extra: map[string]any{
+					"openai_compact_supported":   supported,
+					"openai_compact_checked_at":  time.Now().UTC().Format(time.RFC3339),
+					"openai_compact_last_status": nil,
+					"openai_compact_last_error":  "",
+				},
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      err.Error(),
+				})
+				return nil
+			}
+			successCount++
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"total":   len(req.AccountIDs),
+		"success": successCount,
+		"failed":  failedCount,
+		"errors":  errors,
+	})
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.

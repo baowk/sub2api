@@ -637,6 +637,21 @@ export async function batchFetchAccountInfo(accountIds: number[]): Promise<Batch
   return data
 }
 
+/**
+ * Batch mark OpenAI accounts as compact-supported.
+ * @param accountIds - Array of account IDs
+ * @returns Batch operation result
+ */
+export async function batchCompactSupport(accountIds: number[]): Promise<BatchOperationResult> {
+  const { data } = await apiClient.post<BatchOperationResult>('/admin/accounts/batch-compact-support', {
+    account_ids: accountIds,
+    supported: true
+  }, {
+    timeout: 120000
+  })
+  return data
+}
+
 export async function fetchAccountInfo(
   id: number,
   mode: OpenAIAccountInfoFetchMode = 'all'
@@ -694,6 +709,7 @@ export const accountsAPI = {
   batchClearError,
   batchRefresh,
   batchFetchAccountInfo,
+  batchCompactSupport,
   fetchAccountInfo,
   setPrivacy
 }

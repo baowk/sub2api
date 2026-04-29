@@ -2921,9 +2921,12 @@ export default {
         disableScheduling: '批量停止调度',
         resetStatus: '批量重置状态',
         fetchAccountInfo: '批量同步套餐和模型',
+        compactSupport: '批量标记支持 Compact',
         refreshToken: '批量刷新令牌',
         resetStatusSuccess: '已成功重置 {count} 个账号状态',
         fetchAccountInfoSuccess: '已成功同步 {count} 个账号的套餐和模型',
+        compactSupportSuccess: '已标记 {count} 个账号支持 Compact',
+        compactSupportPartial: 'Compact 标记部分完成：成功 {success} 个，失败 {failed} 个',
         refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
         partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
       },
