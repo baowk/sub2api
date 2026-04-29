@@ -375,6 +375,7 @@ import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRules
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
+import { getModelsByPlatform } from '@/composables/useModelWhitelist'
 import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -664,6 +665,7 @@ const {
   initialParams: {
     platform: '',
     type: '',
+    plan_type: '',
     status: '',
     privacy_mode: '',
     group: '',
@@ -867,6 +869,7 @@ const refreshAccountsIncrementally = async () => {
       toRaw(params) as {
         platform?: string
         type?: string
+        plan_type?: string
         status?: string
         privacy_mode?: string
         group?: string
@@ -1012,12 +1015,31 @@ function getAccountConfiguredModels(row: Account): string[] {
     : []
 
   const merged = [...new Set([...supported, ...mappingKeys])]
-  return merged.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+  return sortAccountConfiguredModels(row.platform, merged)
+}
+
+function sortAccountConfiguredModels(platform: AccountPlatform, models: string[]): string[] {
+  if (models.length <= 1) return models
+
+  if (platform === 'openai') {
+    const preferredOrder = getModelsByPlatform('openai')
+    const orderIndex = new Map(preferredOrder.map((model, index) => [model, index]))
+    return [...models].sort((a, b) => {
+      const aIndex = orderIndex.get(a)
+      const bIndex = orderIndex.get(b)
+      if (aIndex !== undefined && bIndex !== undefined) return aIndex - bIndex
+      if (aIndex !== undefined) return -1
+      if (bIndex !== undefined) return 1
+      return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    })
+  }
+
+  return [...models].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
 }
 
 function getAccountModelPreview(row: Account): string[] {
   const models = getAccountConfiguredModels(row)
-  return models.slice(-2).reverse()
+  return models.slice(0, 2)
 }
 
 function getAccountHiddenModelCount(row: Account): number {
@@ -1296,6 +1318,7 @@ const ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE = '__unset__'
 const buildAccountQueryFilters = () => ({
   platform: params.platform || '',
   type: params.type || '',
+  plan_type: params.plan_type || '',
   status: params.status || '',
   group: params.group || '',
   privacy_mode: params.privacy_mode || '',
@@ -1307,6 +1330,7 @@ const accountMatchesCurrentFilters = (account: Account) => {
   const filters = buildAccountQueryFilters()
   if (filters.platform && account.platform !== filters.platform) return false
   if (filters.type && account.type !== filters.type) return false
+  if (filters.plan_type && !accountMatchesPlanType(account, filters.plan_type)) return false
   if (filters.status) {
     const now = Date.now()
     const rateLimitResetAt = account.rate_limit_reset_at ? new Date(account.rate_limit_reset_at).getTime() : Number.NaN
@@ -1345,6 +1369,19 @@ const accountMatchesCurrentFilters = (account: Account) => {
   const search = String(filters.search || '').trim().toLowerCase()
   if (search && !account.name.toLowerCase().includes(search)) return false
   return true
+}
+
+const accountMatchesPlanType = (account: Account, planType: string): boolean => {
+  const normalized = normalizePlanType(account.credentials?.plan_type)
+  const expected = normalizePlanType(planType)
+  return normalized !== '' && normalized === expected
+}
+
+const normalizePlanType = (planType: unknown): string => {
+  const value = String(planType || '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+  if (value === 'chatgptpro') return 'pro'
+  if (value === 'prolite' || value === 'chatgptprolite') return 'prolite'
+  return value
 }
 const mergeRuntimeFields = (oldAccount: Account, updatedAccount: Account): Account => ({
   ...updatedAccount,

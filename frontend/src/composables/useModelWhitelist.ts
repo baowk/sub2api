@@ -5,20 +5,22 @@
 // OpenAI
 const openaiModels = [
   // Keep the admin model picker focused on GPT-5-era OpenAI models only.
+  // gpt-5.5
   'gpt-5.5',
-  'gpt-5', 'gpt-5-chat', 'gpt-5-chat-latest',
-  'gpt-5-mini', 'gpt-5-nano', 'gpt-5-pro',
-  'gpt-5-2025-08-07', 'gpt-5-mini-2025-08-07', 'gpt-5-nano-2025-08-07',
-  'gpt-5-pro-2025-10-06',
+  // GPT-5.4
+  'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4-2026-03-05',
+  // GPT-5.3 系列
+  'gpt-5.3-codex', 'gpt-5.3-codex-spark',
   // GPT-5.1 系列
   'gpt-5.1', 'gpt-5.1-chat-latest', 'gpt-5.1-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini',
   'gpt-5.1-2025-11-13',
   'gpt-5.2', 'gpt-5.2-2025-12-11', 'gpt-5.2-chat-latest',
   'gpt-5.2-codex', 'gpt-5.2-pro', 'gpt-5.2-pro-2025-12-11',
-  // GPT-5.3 系列
-  'gpt-5.3-codex', 'gpt-5.3-codex-spark',
-  // GPT-5.4 / 5.5
-  'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4-2026-03-05',
+  // gpt05
+  'gpt-5', 'gpt-5-chat', 'gpt-5-chat-latest',
+  'gpt-5-mini', 'gpt-5-nano', 'gpt-5-pro',
+  'gpt-5-2025-08-07', 'gpt-5-mini-2025-08-07', 'gpt-5-nano-2025-08-07',
+  'gpt-5-pro-2025-10-06',
 ]
 
 // Anthropic Claude

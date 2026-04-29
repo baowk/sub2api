@@ -11,6 +11,7 @@ type accountUsageCodexProbeRepo struct {
 	stubOpenAIAccountRepo
 	updateExtraCh chan map[string]any
 	rateLimitCh   chan time.Time
+	clearLimitCh  chan int64
 }
 
 func (r *accountUsageCodexProbeRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
@@ -27,6 +28,13 @@ func (r *accountUsageCodexProbeRepo) UpdateExtra(_ context.Context, _ int64, upd
 func (r *accountUsageCodexProbeRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
 	if r.rateLimitCh != nil {
 		r.rateLimitCh <- resetAt
+	}
+	return nil
+}
+
+func (r *accountUsageCodexProbeRepo) ClearRateLimitFields(_ context.Context, id int64) error {
+	if r.clearLimitCh != nil {
+		r.clearLimitCh <- id
 	}
 	return nil
 }
@@ -92,9 +100,10 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	}
 }
 
-func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *testing.T) {
+func TestAccountUsageService_PersistOpenAICodexProbeSnapshotSyncs7dLimit(t *testing.T) {
 	t.Parallel()
 
+	resetAt := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
 	repo := &accountUsageCodexProbeRepo{
 		updateExtraCh: make(chan map[string]any, 1),
 		rateLimitCh:   make(chan time.Time, 1),
@@ -102,7 +111,7 @@ func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *
 	svc := &AccountUsageService{accountRepo: repo}
 	svc.persistOpenAICodexProbeSnapshot(321, map[string]any{
 		"codex_7d_used_percent": 100.0,
-		"codex_7d_reset_at":     time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339),
+		"codex_7d_reset_at":     resetAt.Format(time.RFC3339),
 	})
 
 	select {
@@ -116,8 +125,11 @@ func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *
 
 	select {
 	case got := <-repo.rateLimitCh:
-		t.Fatalf("不应将探测快照写入运行时限流状态: %v", got)
-	case <-time.After(200 * time.Millisecond):
+		if !got.Equal(resetAt) {
+			t.Fatalf("rate limit reset_at = %v, want %v", got, resetAt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待 codex 7d 限流状态同步超时")
 	}
 }
 
@@ -126,7 +138,8 @@ func TestAccountUsageService_GetOpenAIUsage_DoesNotPromoteCodexExtraToRateLimit(
 
 	resetAt := time.Now().Add(6 * 24 * time.Hour).UTC().Truncate(time.Second)
 	repo := &accountUsageCodexProbeRepo{
-		rateLimitCh: make(chan time.Time, 1),
+		rateLimitCh:  make(chan time.Time, 1),
+		clearLimitCh: make(chan int64, 1),
 	}
 	svc := &AccountUsageService{accountRepo: repo}
 	account := &Account{
@@ -154,6 +167,69 @@ func TestAccountUsageService_GetOpenAIUsage_DoesNotPromoteCodexExtraToRateLimit(
 	case got := <-repo.rateLimitCh:
 		t.Fatalf("不应将已耗尽的 codex extra 持久化为运行时限流状态: %v", got)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestSyncOpenAICodexAccountRateLimitFromUsageWindowUses5hWhen7dAvailable(t *testing.T) {
+	t.Parallel()
+
+	resetAt := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	repo := &accountUsageCodexProbeRepo{
+		clearLimitCh: make(chan int64, 1),
+		rateLimitCh:  make(chan time.Time, 1),
+	}
+
+	syncOpenAICodexAccountRateLimitFromUsageWindow(context.Background(), repo, 321, map[string]any{
+		"codex_5h_used_percent": 100.0,
+		"codex_5h_reset_at":     resetAt.Format(time.RFC3339),
+		"codex_7d_used_percent": 42.0,
+		"codex_7d_reset_at":     time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+	}, time.Now())
+
+	select {
+	case got := <-repo.rateLimitCh:
+		if !got.Equal(resetAt) {
+			t.Fatalf("rate limit reset_at = %v, want %v", got, resetAt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待 5h 账号级限流同步超时")
+	}
+
+	select {
+	case id := <-repo.clearLimitCh:
+		t.Fatalf("5h 耗尽不应清理账号级限流: %d", id)
+	default:
+	}
+}
+
+func TestSyncOpenAICodexAccountRateLimitFromUsageWindowClearsWhenBothWindowsAvailable(t *testing.T) {
+	t.Parallel()
+
+	repo := &accountUsageCodexProbeRepo{
+		clearLimitCh: make(chan int64, 1),
+		rateLimitCh:  make(chan time.Time, 1),
+	}
+
+	syncOpenAICodexAccountRateLimitFromUsageWindow(context.Background(), repo, 321, map[string]any{
+		"codex_5h_used_percent": 42.0,
+		"codex_5h_reset_at":     time.Now().Add(time.Hour).Format(time.RFC3339),
+		"codex_7d_used_percent": 88.0,
+		"codex_7d_reset_at":     time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+	}, time.Now())
+
+	select {
+	case id := <-repo.clearLimitCh:
+		if id != 321 {
+			t.Fatalf("cleared account id = %d, want 321", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待清理账号级限流超时")
+	}
+
+	select {
+	case got := <-repo.rateLimitCh:
+		t.Fatalf("两个窗口都未耗尽不应设置账号级限流: %v", got)
+	default:
 	}
 }
 
