@@ -457,10 +457,10 @@ func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 }
 
 func (r *accountRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.Account, *pagination.PaginationResult, error) {
-	return r.ListWithFilters(ctx, params, "", "", "", "", "", 0, "")
+	return r.ListWithFilters(ctx, params, "", "", "", "", "", 0, "", "")
 }
 
-func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, planType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
+func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, planType, status, search string, groupID int64, privacyMode, subscriptionExpiry string) ([]service.Account, *pagination.PaginationResult, error) {
 	q := r.client.Account.Query()
 
 	if platform != "" {
@@ -557,6 +557,9 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 				s.Where(sqljson.ValueEQ(dbaccount.FieldExtra, privacyMode, path))
 			}
 		}))
+	}
+	if subscriptionExpiry != "" {
+		q = q.Where(accountSubscriptionExpiryPredicate(subscriptionExpiry))
 	}
 
 	total, err := q.Count(ctx)
@@ -663,6 +666,53 @@ func accountPlanTypeInPredicate(aliases []string) dbpredicate.Account {
 				b.Arg(alias)
 			}
 			b.WriteString(")")
+		}))
+	})
+}
+
+func accountSubscriptionExpiryPredicate(filter string) dbpredicate.Account {
+	normalized := strings.ToLower(strings.TrimSpace(filter))
+	return dbpredicate.Account(func(s *entsql.Selector) {
+		s.Where(entsql.P(func(b *entsql.Builder) {
+			expiresExpr := func() {
+				b.WriteString("NULLIF(").
+					Ident(s.C(dbaccount.FieldCredentials)).
+					WriteString("->>'subscription_expires_at', '')::timestamptz")
+			}
+			existsExpr := func() {
+				b.WriteString("NULLIF(").
+					Ident(s.C(dbaccount.FieldCredentials)).
+					WriteString("->>'subscription_expires_at', '')")
+			}
+
+			switch normalized {
+			case "expired":
+				expiresExpr()
+				b.WriteString(" <= NOW()")
+			case "expiring_3d":
+				expiresExpr()
+				b.WriteString(" > NOW() AND ")
+				expiresExpr()
+				b.WriteString(" <= NOW() + INTERVAL '3 days'")
+			case "expiring_7d":
+				expiresExpr()
+				b.WriteString(" > NOW() AND ")
+				expiresExpr()
+				b.WriteString(" <= NOW() + INTERVAL '7 days'")
+			case "expiring_30d":
+				expiresExpr()
+				b.WriteString(" > NOW() AND ")
+				expiresExpr()
+				b.WriteString(" <= NOW() + INTERVAL '30 days'")
+			case "has":
+				existsExpr()
+				b.WriteString(" IS NOT NULL")
+			case "missing":
+				existsExpr()
+				b.WriteString(" IS NULL")
+			default:
+				b.WriteString("TRUE")
+			}
 		}))
 	})
 }

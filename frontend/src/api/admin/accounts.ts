@@ -38,6 +38,7 @@ export async function list(
     group?: string
     search?: string
     privacy_mode?: string
+    subscription_expiry?: string
     lite?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'
@@ -74,6 +75,7 @@ export async function listWithEtag(
     group?: string
     search?: string
     privacy_mode?: string
+    subscription_expiry?: string
     lite?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'

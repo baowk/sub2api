@@ -170,7 +170,7 @@
             <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
           </template>
           <template #cell-name="{ row, value }">
-            <div class="flex flex-col">
+            <div class="flex flex-col gap-0.5">
               <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
               <span
                 v-if="row.extra?.email_address"
@@ -178,6 +178,13 @@
                 :title="row.extra.email_address"
               >
                 {{ row.extra.email_address }}
+              </span>
+              <span
+                v-if="getSubscriptionExpiresLabel(row)"
+                :class="['text-xs font-medium', getSubscriptionExpiresClass(row)]"
+                :title="String(row.credentials?.subscription_expires_at || '')"
+              >
+                {{ getSubscriptionExpiresLabel(row) }}
               </span>
             </div>
           </template>
@@ -188,7 +195,7 @@
           <template #cell-platform_type="{ row }">
             <div class="flex min-w-0 flex-col gap-1.5">
               <div class="flex flex-wrap items-center gap-1">
-                <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
+                <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" />
               </div>
               <div class="flex flex-col items-start gap-1">
                 <span
@@ -670,6 +677,7 @@ const {
     plan_type: '',
     status: '',
     privacy_mode: '',
+    subscription_expiry: '',
     group: '',
     search: '',
     sort_by: sortState.sort_by,
@@ -1000,6 +1008,38 @@ function getOpenAICompactTitle(row: any): string {
   const checkedAt = typeof extra?.openai_compact_checked_at === 'string' ? extra.openai_compact_checked_at : ''
   if (!checkedAt) return getOpenAICompactLabel(row) || ''
   return `${getOpenAICompactLabel(row)} | ${t('admin.accounts.openai.compactLastChecked')}: ${formatDateTime(new Date(checkedAt))}`
+}
+
+function getSubscriptionExpiresDate(row: Account): Date | null {
+  const credentials = row.credentials as Record<string, unknown> | undefined
+  const planType = typeof credentials?.plan_type === 'string' ? credentials.plan_type.trim().toLowerCase() : ''
+  if (!planType || planType === 'free') return null
+
+  const rawExpiresAt = credentials?.subscription_expires_at
+  if (typeof rawExpiresAt !== 'string' || rawExpiresAt.trim() === '') return null
+
+  const expiresAt = new Date(rawExpiresAt)
+  return Number.isNaN(expiresAt.getTime()) ? null : expiresAt
+}
+
+function getSubscriptionExpiresLabel(row: Account): string {
+  const expiresAt = getSubscriptionExpiresDate(row)
+  if (!expiresAt) return ''
+
+  const yyyy = expiresAt.getFullYear()
+  const mm = String(expiresAt.getMonth() + 1).padStart(2, '0')
+  const dd = String(expiresAt.getDate()).padStart(2, '0')
+  return `${t('admin.accounts.subscriptionExpires')} ${yyyy}-${mm}-${dd}`
+}
+
+function getSubscriptionExpiresClass(row: Account): string {
+  const expiresAt = getSubscriptionExpiresDate(row)
+  if (!expiresAt) return 'text-gray-400 dark:text-gray-500'
+
+  const daysRemaining = Math.ceil((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  if (daysRemaining <= 3) return 'text-red-600 dark:text-red-400'
+  if (daysRemaining <= 7) return 'text-amber-600 dark:text-amber-400'
+  return 'text-gray-400 dark:text-gray-500'
 }
 
 function getAccountConfiguredModels(row: Account): string[] {
@@ -1340,6 +1380,7 @@ const buildAccountQueryFilters = () => ({
   status: params.status || '',
   group: params.group || '',
   privacy_mode: params.privacy_mode || '',
+  subscription_expiry: params.subscription_expiry || '',
   search: params.search || '',
   sort_by: sortState.sort_by,
   sort_order: sortState.sort_order
@@ -1384,6 +1425,7 @@ const accountMatchesCurrentFilters = (account: Account) => {
       return false
     }
   }
+  if (filters.subscription_expiry && !accountMatchesSubscriptionExpiry(account, filters.subscription_expiry)) return false
   const search = String(filters.search || '').trim().toLowerCase()
   if (search && !account.name.toLowerCase().includes(search)) return false
   return true
@@ -1393,6 +1435,27 @@ const accountMatchesPlanType = (account: Account, planType: string): boolean => 
   const normalized = normalizePlanType(account.credentials?.plan_type)
   const expected = normalizePlanType(planType)
   return normalized !== '' && normalized === expected
+}
+
+const accountMatchesSubscriptionExpiry = (account: Account, filter: string): boolean => {
+  const expiresAt = getSubscriptionExpiresDate(account)
+  if (filter === 'missing') return !expiresAt
+  if (filter === 'has') return !!expiresAt
+  if (!expiresAt) return false
+
+  const diffMs = expiresAt.getTime() - Date.now()
+  switch (filter) {
+    case 'expired':
+      return diffMs <= 0
+    case 'expiring_3d':
+      return diffMs > 0 && diffMs <= 3 * 24 * 60 * 60 * 1000
+    case 'expiring_7d':
+      return diffMs > 0 && diffMs <= 7 * 24 * 60 * 60 * 1000
+    case 'expiring_30d':
+      return diffMs > 0 && diffMs <= 30 * 24 * 60 * 60 * 1000
+    default:
+      return true
+  }
 }
 
 const normalizePlanType = (planType: unknown): string => {

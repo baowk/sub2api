@@ -12,6 +12,7 @@
     <Select :model-value="filters.plan_type" class="w-40" :options="planOpts" @update:model-value="updatePlanType" @change="$emit('change')" />
     <Select :model-value="filters.status" class="w-40" :options="sOpts" @update:model-value="updateStatus" @change="$emit('change')" />
     <Select :model-value="filters.privacy_mode" class="w-40" :options="privacyOpts" @update:model-value="updatePrivacyMode" @change="$emit('change')" />
+    <Select :model-value="filters.subscription_expiry" class="w-40" :options="subscriptionExpiryOpts" @update:model-value="updateSubscriptionExpiry" @change="$emit('change')" />
     <Select :model-value="filters.group" class="w-40" :options="gOpts" @update:model-value="updateGroup" @change="$emit('change')" />
   </div>
 </template>
@@ -26,6 +27,7 @@ const updateType = (value: string | number | boolean | null) => { emit('update:f
 const updatePlanType = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, plan_type: value }) }
 const updateStatus = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, status: value }) }
 const updatePrivacyMode = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, privacy_mode: value }) }
+const updateSubscriptionExpiry = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, subscription_expiry: value }) }
 const updateGroup = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, group: value }) }
 const pOpts = computed(() => [{ value: '', label: t('admin.accounts.allPlatforms') }, { value: 'anthropic', label: 'Anthropic' }, { value: 'openai', label: 'OpenAI' }, { value: 'gemini', label: 'Gemini' }, { value: 'antigravity', label: 'Antigravity' }])
 const tOpts = computed(() => [{ value: '', label: t('admin.accounts.allTypes') }, { value: 'oauth', label: t('admin.accounts.oauthType') }, { value: 'setup-token', label: t('admin.accounts.setupToken') }, { value: 'apikey', label: t('admin.accounts.apiKey') }, { value: 'bedrock', label: 'AWS Bedrock' }])
@@ -44,6 +46,15 @@ const privacyOpts = computed(() => [
   { value: 'training_off', label: 'Privacy' },
   { value: 'training_set_cf_blocked', label: 'CF' },
   { value: 'training_set_failed', label: 'Fail' }
+])
+const subscriptionExpiryOpts = computed(() => [
+  { value: '', label: '全部套餐时间' },
+  { value: 'expired', label: '已到期' },
+  { value: 'expiring_3d', label: '3天内到期' },
+  { value: 'expiring_7d', label: '7天内到期' },
+  { value: 'expiring_30d', label: '30天内到期' },
+  { value: 'has', label: '有到期时间' },
+  { value: 'missing', label: '无到期时间' }
 ])
 const gOpts = computed(() => [
   { value: '', label: t('admin.accounts.allGroups') },
