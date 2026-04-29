@@ -124,7 +124,8 @@ scripts
 .code-review-state
 #openspec/
 code-reviews/
-#AGENTS.md
+AGENTS.md
+tools/backup_and_add_openai_gpt55.sh
 backend/cmd/server/server
 deploy/docker-compose.override.yml
 .gocache/
