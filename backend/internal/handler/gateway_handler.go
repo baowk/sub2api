@@ -44,6 +44,7 @@ type GatewayHandler struct {
 	usageService              *service.UsageService
 	apiKeyService             *service.APIKeyService
 	usageRecordWorkerPool     *service.UsageRecordWorkerPool
+	chatSessionService        *service.ChatSessionService
 	errorPassthroughService   *service.ErrorPassthroughService
 	concurrencyHelper         *ConcurrencyHelper
 	userMsgQueueHelper        *UserMsgQueueHelper
@@ -64,6 +65,7 @@ func NewGatewayHandler(
 	usageService *service.UsageService,
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	chatSessionService *service.ChatSessionService,
 	errorPassthroughService *service.ErrorPassthroughService,
 	userMsgQueueService *service.UserMessageQueueService,
 	cfg *config.Config,
@@ -97,6 +99,7 @@ func NewGatewayHandler(
 		usageService:              usageService,
 		apiKeyService:             apiKeyService,
 		usageRecordWorkerPool:     usageRecordWorkerPool,
+		chatSessionService:        chatSessionService,
 		errorPassthroughService:   errorPassthroughService,
 		concurrencyHelper:         NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval),
 		userMsgQueueHelper:        umqHelper,
@@ -191,6 +194,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	// Track if we've started streaming (for error handling)
 	streamStarted := false
+	captureWriter, restoreWriter := attachChatSessionCapture(c)
+	defer restoreWriter()
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
 	if h.errorPassthroughService != nil {
@@ -511,6 +516,29 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					).Error("gateway.record_usage_failed", zap.Error(err))
 				}
 			})
+			recordChatSessionAsync(
+				c.Request.Context(),
+				h.chatSessionService,
+				apiKey,
+				account,
+				buildChatSessionRecordInput(
+					apiKey,
+					account,
+					sessionHash,
+					result.RequestID,
+					reqModel,
+					reqStream,
+					service.RequestTypeFromLegacy(reqStream, false),
+					c.Writer.Status(),
+					inboundEndpoint,
+					upstreamEndpoint,
+					reqModel,
+					result.UpstreamModel,
+				),
+				body,
+				captureWriter.Bytes(),
+				result.FinalOutputText,
+			)
 			return
 		}
 	}
@@ -868,6 +896,29 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					).Error("gateway.record_usage_failed", zap.Error(err))
 				}
 			})
+			recordChatSessionAsync(
+				c.Request.Context(),
+				h.chatSessionService,
+				currentAPIKey,
+				account,
+				buildChatSessionRecordInput(
+					currentAPIKey,
+					account,
+					sessionHash,
+					result.RequestID,
+					reqModel,
+					reqStream,
+					service.RequestTypeFromLegacy(reqStream, false),
+					c.Writer.Status(),
+					inboundEndpoint,
+					upstreamEndpoint,
+					reqModel,
+					result.UpstreamModel,
+				),
+				body,
+				captureWriter.Bytes(),
+				result.FinalOutputText,
+			)
 			return
 		}
 		if !retryWithFallback {

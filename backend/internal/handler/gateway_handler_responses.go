@@ -80,6 +80,8 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	setOpsRequestContext(c, reqModel, reqStream, body)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
+	captureWriter, restoreWriter := attachChatSessionCapture(c)
+	defer restoreWriter()
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
@@ -280,6 +282,29 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				)
 			}
 		})
+		recordChatSessionAsync(
+			c.Request.Context(),
+			h.chatSessionService,
+			apiKey,
+			account,
+			buildChatSessionRecordInput(
+				apiKey,
+				account,
+				sessionHash,
+				result.RequestID,
+				reqModel,
+				reqStream,
+				service.RequestTypeFromLegacy(reqStream, false),
+				c.Writer.Status(),
+				inboundEndpoint,
+				upstreamEndpoint,
+				reqModel,
+				result.UpstreamModel,
+			),
+			body,
+			captureWriter.Bytes(),
+			result.FinalOutputText,
+		)
 		return
 	}
 }

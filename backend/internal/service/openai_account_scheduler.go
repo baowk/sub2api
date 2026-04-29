@@ -892,7 +892,11 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(account *Acco
 	if account == nil {
 		return false
 	}
-	if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
+	requestedModel := req.RequestedModel
+	if fallbackModel, ok := resolveOpenAIGPT55FallbackModel(account, requestedModel); ok {
+		requestedModel = fallbackModel
+	}
+	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
 		return false
 	}
 	return account.SupportsOpenAIImageCapability(req.RequiredImageCapability)

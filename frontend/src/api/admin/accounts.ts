@@ -33,10 +33,12 @@ export async function list(
   filters?: {
     platform?: string
     type?: string
+    plan_type?: string
     status?: string
     group?: string
     search?: string
     privacy_mode?: string
+    subscription_expiry?: string
     lite?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'
@@ -68,10 +70,12 @@ export async function listWithEtag(
   filters?: {
     platform?: string
     type?: string
+    plan_type?: string
     status?: string
     group?: string
     search?: string
     privacy_mode?: string
+    subscription_expiry?: string
     lite?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'
@@ -503,6 +507,7 @@ export async function exportData(options?: {
   filters?: {
     platform?: string
     type?: string
+    plan_type?: string
     status?: string
     group?: string
     privacy_mode?: string
@@ -516,9 +521,10 @@ export async function exportData(options?: {
   if (options?.ids && options.ids.length > 0) {
     params.ids = options.ids.join(',')
   } else if (options?.filters) {
-    const { platform, type, status, group, privacy_mode, search, sort_by, sort_order } = options.filters
+    const { platform, type, plan_type, status, group, privacy_mode, search, sort_by, sort_order } = options.filters
     if (platform) params.platform = platform
     if (type) params.type = type
+    if (plan_type) params.plan_type = plan_type
     if (status) params.status = status
     if (group) params.group = group
     if (privacy_mode) params.privacy_mode = privacy_mode
@@ -591,6 +597,8 @@ export interface BatchOperationResult {
   warnings?: Array<{ account_id: number; warning: string }>
 }
 
+export type OpenAIAccountInfoFetchMode = 'all' | 'plan' | 'models'
+
 /**
  * Batch clear account errors
  * @param accountIds - Array of account IDs
@@ -613,6 +621,45 @@ export async function batchRefresh(accountIds: number[]): Promise<BatchOperation
     account_ids: accountIds,
   }, {
     timeout: 120000  // 120s timeout for large batch refreshes
+  })
+  return data
+}
+
+/**
+ * Batch fetch account info for OpenAI OAuth accounts
+ * @param accountIds - Array of account IDs
+ * @returns Batch operation result
+ */
+export async function batchFetchAccountInfo(accountIds: number[]): Promise<BatchOperationResult> {
+  const { data } = await apiClient.post<BatchOperationResult>('/admin/accounts/batch-fetch-account-info', {
+    account_ids: accountIds,
+  }, {
+    timeout: 120000
+  })
+  return data
+}
+
+/**
+ * Batch mark OpenAI accounts as compact-supported.
+ * @param accountIds - Array of account IDs
+ * @returns Batch operation result
+ */
+export async function batchCompactSupport(accountIds: number[]): Promise<BatchOperationResult> {
+  const { data } = await apiClient.post<BatchOperationResult>('/admin/accounts/batch-compact-support', {
+    account_ids: accountIds,
+    supported: true
+  }, {
+    timeout: 120000
+  })
+  return data
+}
+
+export async function fetchAccountInfo(
+  id: number,
+  mode: OpenAIAccountInfoFetchMode = 'all'
+): Promise<Account> {
+  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/fetch-account-info`, { mode }, {
+    timeout: 120000
   })
   return data
 }
@@ -663,6 +710,9 @@ export const accountsAPI = {
   getAntigravityDefaultModelMapping,
   batchClearError,
   batchRefresh,
+  batchFetchAccountInfo,
+  batchCompactSupport,
+  fetchAccountInfo,
   setPrivacy
 }
 

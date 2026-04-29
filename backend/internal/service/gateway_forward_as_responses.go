@@ -328,6 +328,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	// Convert to Responses format
 	responsesResp := apicompat.AnthropicToResponsesResponse(finalResp)
 	responsesResp.Model = originalModel // Use original model name
+	finalOutputText := extractResponsesOutputText(responsesResp)
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -347,6 +348,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		ReasoningEffort: reasoningEffort,
 		Stream:          false,
 		Duration:        time.Since(startTime),
+		FinalOutputText: finalOutputText,
 	}, nil
 }
 

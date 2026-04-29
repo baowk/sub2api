@@ -62,6 +62,7 @@ func newTestContext() (*gin.Context, *httptest.ResponseRecorder) {
 type openAIAccountTestRepo struct {
 	mockAccountRepoForGemini
 	updatedExtra   map[string]any
+	updatedCreds   map[string]any
 	rateLimitedID  int64
 	rateLimitedAt  *time.Time
 	clearedErrorID int64
@@ -71,6 +72,11 @@ type openAIAccountTestRepo struct {
 
 func (r *openAIAccountTestRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
 	r.updatedExtra = updates
+	return nil
+}
+
+func (r *openAIAccountTestRepo) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
+	r.updatedCreds = credentials
 	return nil
 }
 
@@ -122,6 +128,38 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 	require.NotEmpty(t, repo.updatedExtra)
 	require.Equal(t, 42.0, repo.updatedExtra["codex_5h_used_percent"])
 	require.Equal(t, 88.0, repo.updatedExtra["codex_7d_used_percent"])
+	require.Contains(t, recorder.Body.String(), "test_complete")
+}
+
+func TestAccountTestService_OpenAISuccessPersistsTestedModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
+
+`))
+
+	repo := &openAIAccountTestRepo{}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+	account := &Account{
+		ID:          90,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":     "test-token",
+			"supported_models": []any{"gpt-5.4"},
+			"model_mapping":    map[string]any{"gpt-5.4": "gpt-5.4"},
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "", "")
+	require.NoError(t, err)
+	require.NotNil(t, repo.updatedCreds)
+	require.Equal(t, []string{"gpt-5.4", "gpt-5.5"}, repo.updatedCreds["supported_models"])
+	require.Equal(t, map[string]any{"gpt-5.4": "gpt-5.4", "gpt-5.5": "gpt-5.5"}, repo.updatedCreds["model_mapping"])
 	require.Contains(t, recorder.Body.String(), "test_complete")
 }
 

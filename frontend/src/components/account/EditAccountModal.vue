@@ -139,6 +139,21 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
+              <div
+                v-if="needsOpenAIWhitelistUpgrade"
+                class="mb-3 flex items-center justify-between rounded-lg bg-sky-50 px-3 py-2 dark:bg-sky-900/20"
+              >
+                <p class="pr-3 text-xs text-sky-700 dark:text-sky-300">
+                  {{ t('admin.accounts.openaiWhitelistUpgradeHint') }}
+                </p>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-lg bg-sky-100 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:hover:bg-sky-900/60"
+                  @click="syncOpenAIWhitelistToLatest"
+                >
+                  {{ t('admin.accounts.openaiWhitelistUpgradeAction') }}
+                </button>
+              </div>
               <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
@@ -454,6 +469,21 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
+            <div
+              v-if="needsOpenAIWhitelistUpgrade"
+              class="mb-3 flex items-center justify-between rounded-lg bg-sky-50 px-3 py-2 dark:bg-sky-900/20"
+            >
+              <p class="pr-3 text-xs text-sky-700 dark:text-sky-300">
+                {{ t('admin.accounts.openaiWhitelistUpgradeHint') }}
+              </p>
+              <button
+                type="button"
+                class="shrink-0 rounded-lg bg-sky-100 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:hover:bg-sky-900/60"
+                @click="syncOpenAIWhitelistToLatest"
+              >
+                {{ t('admin.accounts.openaiWhitelistUpgradeAction') }}
+              </button>
+            </div>
             <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
@@ -1096,6 +1126,35 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.chatCompletionsCompat') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.chatCompletionsCompatDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="openaiChatCompletionsCompatEnabled = !openaiChatCompletionsCompatEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiChatCompletionsCompatEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiChatCompletionsCompatEnabled ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -1930,6 +1989,7 @@ import {
 } from '@/utils/openaiWsMode'
 import {
   getPresetMappingsByPlatform,
+  getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
   isValidWildcardPattern
@@ -2052,6 +2112,7 @@ const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
 const openaiPassthroughEnabled = ref(false)
+const openaiChatCompletionsCompatEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
@@ -2111,9 +2172,19 @@ const openAICompactModeOptions = computed(() => [
   { value: 'force_on', label: t('admin.accounts.openai.compactModeForceOn') },
   { value: 'force_off', label: t('admin.accounts.openai.compactModeForceOff') }
 ])
+const latestOpenAIWhitelistModels = computed(() => getModelsByPlatform('openai'))
 const isOpenAIModelRestrictionDisabled = computed(() =>
   props.account?.platform === 'openai' && openaiPassthroughEnabled.value
 )
+const needsOpenAIWhitelistUpgrade = computed(() => {
+  if (props.account?.platform !== 'openai' || modelRestrictionMode.value !== 'whitelist') {
+    return false
+  }
+  if (allowedModels.value.length === 0) {
+    return false
+  }
+  return latestOpenAIWhitelistModels.value.some((model) => !allowedModels.value.includes(model))
+})
 const openAICompactStatusKey = computed(() => {
   const extra = props.account?.extra as Record<string, unknown> | undefined
   if (!props.account || props.account.platform !== 'openai') return ''
@@ -2256,6 +2327,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
+  openaiChatCompletionsCompatEnabled.value = false
   openAICompactMode.value = 'auto'
   openAICompactModelMappings.value = []
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
@@ -2265,6 +2337,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
+    openaiChatCompletionsCompatEnabled.value = extra?.openai_chat_completions_compat === true
     openAICompactMode.value = (extra?.openai_compact_mode as OpenAICompactMode) || 'auto'
     openaiOAuthResponsesWebSocketV2Mode.value = resolveOpenAIWSModeFromExtra(extra, {
       modeKey: 'openai_oauth_responses_websockets_v2_mode',
@@ -2519,14 +2592,25 @@ async function loadTLSProfiles() {
   }
 }
 
+async function refreshAccountFromServer(account: Account) {
+  try {
+    const latest = await adminAPI.accounts.getById(account.id)
+    Object.assign(account, latest)
+    syncFormFromAccount(account)
+  } catch (error) {
+    console.error('Failed to refresh account before editing:', error)
+    syncFormFromAccount(account)
+  }
+}
+
 watch(
   [() => props.show, () => props.account],
-  ([show, newAccount], [wasShow, previousAccount]) => {
+  async ([show, newAccount], [wasShow, previousAccount]) => {
     if (!show || !newAccount) {
       return
     }
     if (!wasShow || newAccount !== previousAccount) {
-      syncFormFromAccount(newAccount)
+      await refreshAccountFromServer(newAccount)
       loadTLSProfiles()
     }
   },
@@ -2823,6 +2907,14 @@ const splitTempUnschedKeywords = (value: string) => {
     .split(/[,;]/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
+}
+
+const syncOpenAIWhitelistToLatest = () => {
+  allowedModels.value = [
+    ...latestOpenAIWhitelistModels.value,
+    ...allowedModels.value.filter((model) => !latestOpenAIWhitelistModels.value.includes(model))
+  ]
+  appStore.showSuccess(t('admin.accounts.openaiWhitelistSynced'))
 }
 
 function toPositiveNumber(value: unknown) {
@@ -3316,6 +3408,11 @@ const handleSubmit = async () => {
       } else {
         delete newExtra.openai_passthrough
         delete newExtra.openai_oauth_passthrough
+      }
+      if (props.account.type === 'apikey' && openaiChatCompletionsCompatEnabled.value) {
+        newExtra.openai_chat_completions_compat = true
+      } else {
+        delete newExtra.openai_chat_completions_compat
       }
       if (openAICompactMode.value === 'auto') {
         delete newExtra.openai_compact_mode

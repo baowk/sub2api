@@ -31,6 +31,7 @@ type OpenAIGatewayHandler struct {
 	billingCacheService     *service.BillingCacheService
 	apiKeyService           *service.APIKeyService
 	usageRecordWorkerPool   *service.UsageRecordWorkerPool
+	chatSessionService      *service.ChatSessionService
 	errorPassthroughService *service.ErrorPassthroughService
 	concurrencyHelper       *ConcurrencyHelper
 	maxAccountSwitches      int
@@ -61,6 +62,7 @@ func NewOpenAIGatewayHandler(
 	billingCacheService *service.BillingCacheService,
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	chatSessionService *service.ChatSessionService,
 	errorPassthroughService *service.ErrorPassthroughService,
 	cfg *config.Config,
 ) *OpenAIGatewayHandler {
@@ -77,6 +79,7 @@ func NewOpenAIGatewayHandler(
 		billingCacheService:     billingCacheService,
 		apiKeyService:           apiKeyService,
 		usageRecordWorkerPool:   usageRecordWorkerPool,
+		chatSessionService:      chatSessionService,
 		errorPassthroughService: errorPassthroughService,
 		concurrencyHelper:       NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, pingInterval),
 		maxAccountSwitches:      maxAccountSwitches,
@@ -196,6 +199,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	setOpsRequestContext(c, reqModel, reqStream, body)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
+	captureWriter, restoreWriter := attachChatSessionCapture(c)
+	defer restoreWriter()
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
@@ -420,6 +425,31 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				).Error("openai.record_usage_failed", zap.Error(err))
 			}
 		})
+		inboundEndpoint := GetInboundEndpoint(c)
+		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+		recordChatSessionAsync(
+			c.Request.Context(),
+			h.chatSessionService,
+			apiKey,
+			account,
+			buildChatSessionRecordInput(
+				apiKey,
+				account,
+				sessionHash,
+				result.RequestID,
+				reqModel,
+				reqStream,
+				service.RequestTypeFromLegacy(reqStream, false),
+				c.Writer.Status(),
+				inboundEndpoint,
+				upstreamEndpoint,
+				reqModel,
+				result.UpstreamModel,
+			),
+			body,
+			captureWriter.Bytes(),
+			result.FinalOutputText,
+		)
 		reqLog.Debug("openai.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),
@@ -579,6 +609,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	setOpsRequestContext(c, reqModel, reqStream, body)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
+	captureWriter, restoreWriter := attachChatSessionCapture(c)
+	defer restoreWriter()
 
 	// 解析渠道级模型映射
 	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
@@ -793,6 +825,31 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				).Error("openai_messages.record_usage_failed", zap.Error(err))
 			}
 		})
+		inboundEndpoint := GetInboundEndpoint(c)
+		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+		recordChatSessionAsync(
+			c.Request.Context(),
+			h.chatSessionService,
+			apiKey,
+			account,
+			buildChatSessionRecordInput(
+				apiKey,
+				account,
+				sessionHash,
+				result.RequestID,
+				reqModel,
+				reqStream,
+				service.RequestTypeFromLegacy(reqStream, false),
+				c.Writer.Status(),
+				inboundEndpoint,
+				upstreamEndpoint,
+				reqModel,
+				result.UpstreamModel,
+			),
+			body,
+			captureWriter.Bytes(),
+			result.FinalOutputText,
+		)
 		reqLog.Debug("openai_messages.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),

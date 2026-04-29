@@ -496,6 +496,9 @@ type ForwardResult struct {
 	// 图片生成计费字段（图片生成模型使用）
 	ImageCount int    // 生成的图片数量
 	ImageSize  string // 图片尺寸 "1K", "2K", "4K"
+	// FinalOutputText is an optional normalized final assistant reply used by
+	// auxiliary persistence paths (e.g. chat audit). It does not affect billing.
+	FinalOutputText string
 }
 
 // UpstreamFailoverError indicates an upstream error that should trigger account failover.

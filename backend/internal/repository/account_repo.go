@@ -457,10 +457,10 @@ func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 }
 
 func (r *accountRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.Account, *pagination.PaginationResult, error) {
-	return r.ListWithFilters(ctx, params, "", "", "", "", 0, "")
+	return r.ListWithFilters(ctx, params, "", "", "", "", "", 0, "", "")
 }
 
-func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
+func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, planType, status, search string, groupID int64, privacyMode, subscriptionExpiry string) ([]service.Account, *pagination.PaginationResult, error) {
 	q := r.client.Account.Query()
 
 	if platform != "" {
@@ -468,6 +468,12 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 	}
 	if accountType != "" {
 		q = q.Where(dbaccount.TypeEQ(accountType))
+	}
+	if planType != "" {
+		aliases := accountPlanTypeAliases(planType)
+		if len(aliases) > 0 {
+			q = q.Where(accountPlanTypeInPredicate(aliases))
+		}
 	}
 	if status != "" {
 		switch status {
@@ -552,6 +558,9 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 			}
 		}))
 	}
+	if subscriptionExpiry != "" {
+		q = q.Where(accountSubscriptionExpiryPredicate(subscriptionExpiry))
+	}
 
 	total, err := q.Count(ctx)
 	if err != nil {
@@ -619,6 +628,93 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 		return []func(*entsql.Selector){dbent.Asc(dbaccount.FieldName), dbent.Asc(dbaccount.FieldID)}
 	}
 	return []func(*entsql.Selector){dbent.Asc(field), dbent.Asc(dbaccount.FieldID)}
+}
+
+func accountPlanTypeAliases(planType string) []string {
+	normalized := normalizeAccountPlanType(planType)
+	switch normalized {
+	case "free":
+		return []string{"free"}
+	case "plus":
+		return []string{"plus"}
+	case "team":
+		return []string{"team"}
+	case "prolite":
+		return []string{"prolite", "chatgptprolite"}
+	case "pro":
+		return []string{"pro", "chatgptpro"}
+	default:
+		return nil
+	}
+}
+
+func normalizeAccountPlanType(planType string) string {
+	replacer := strings.NewReplacer(" ", "", "_", "", "-", "")
+	return replacer.Replace(strings.ToLower(strings.TrimSpace(planType)))
+}
+
+func accountPlanTypeInPredicate(aliases []string) dbpredicate.Account {
+	return dbpredicate.Account(func(s *entsql.Selector) {
+		s.Where(entsql.P(func(b *entsql.Builder) {
+			b.WriteString("LOWER(REPLACE(REPLACE(REPLACE(COALESCE(").
+				Ident(s.C(dbaccount.FieldCredentials)).
+				WriteString("->>'plan_type', ''), ' ', ''), '_', ''), '-', '')) IN (")
+			for i, alias := range aliases {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.Arg(alias)
+			}
+			b.WriteString(")")
+		}))
+	})
+}
+
+func accountSubscriptionExpiryPredicate(filter string) dbpredicate.Account {
+	normalized := strings.ToLower(strings.TrimSpace(filter))
+	return dbpredicate.Account(func(s *entsql.Selector) {
+		s.Where(entsql.P(func(b *entsql.Builder) {
+			expiresExpr := func() {
+				b.WriteString("NULLIF(").
+					Ident(s.C(dbaccount.FieldCredentials)).
+					WriteString("->>'subscription_expires_at', '')::timestamptz")
+			}
+			existsExpr := func() {
+				b.WriteString("NULLIF(").
+					Ident(s.C(dbaccount.FieldCredentials)).
+					WriteString("->>'subscription_expires_at', '')")
+			}
+
+			switch normalized {
+			case "expired":
+				expiresExpr()
+				b.WriteString(" <= NOW()")
+			case "expiring_3d":
+				expiresExpr()
+				b.WriteString(" > NOW() AND ")
+				expiresExpr()
+				b.WriteString(" <= NOW() + INTERVAL '3 days'")
+			case "expiring_7d":
+				expiresExpr()
+				b.WriteString(" > NOW() AND ")
+				expiresExpr()
+				b.WriteString(" <= NOW() + INTERVAL '7 days'")
+			case "expiring_30d":
+				expiresExpr()
+				b.WriteString(" > NOW() AND ")
+				expiresExpr()
+				b.WriteString(" <= NOW() + INTERVAL '30 days'")
+			case "has":
+				existsExpr()
+				b.WriteString(" IS NOT NULL")
+			case "missing":
+				existsExpr()
+				b.WriteString(" IS NULL")
+			default:
+				b.WriteString("TRUE")
+			}
+		}))
+	})
 }
 
 func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {
@@ -1173,6 +1269,22 @@ func (r *accountRepository) ClearRateLimit(ctx context.Context, id int64) error 
 	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue clear rate limit failed: account=%d err=%v", id, err)
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return nil
+}
+
+func (r *accountRepository) ClearRateLimitFields(ctx context.Context, id int64) error {
+	_, err := r.client.Account.Update().
+		Where(dbaccount.IDEQ(id)).
+		ClearRateLimitedAt().
+		ClearRateLimitResetAt().
+		Save(ctx)
+	if err != nil {
+		return err
+	}
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue clear rate limit fields failed: account=%d err=%v", id, err)
 	}
 	r.syncSchedulerAccountSnapshot(ctx, id)
 	return nil

@@ -363,6 +363,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	acc.SupplementResponseOutput(finalResponse)
 
 	anthropicResp := apicompat.ResponsesToAnthropic(finalResponse, originalModel)
+	finalOutputText := extractAnthropicResponseText(anthropicResp)
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -377,6 +378,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 		UpstreamModel: upstreamModel,
 		Stream:        false,
 		Duration:      time.Since(startTime),
+		FinalOutputText: finalOutputText,
 	}, nil
 }
 

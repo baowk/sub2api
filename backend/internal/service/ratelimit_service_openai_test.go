@@ -46,7 +46,7 @@ func TestCalculateOpenAI429ResetTime_7dExhausted(t *testing.T) {
 func TestCalculateOpenAI429ResetTime_5hExhausted(t *testing.T) {
 	svc := &RateLimitService{}
 
-	// Simulate headers when 5h limit is exhausted (100% used)
+	// 7d 未耗尽但 5h 耗尽时，应按 5h 恢复时间账号级限流。
 	headers := http.Header{}
 	headers.Set("x-codex-primary-used-percent", "50")
 	headers.Set("x-codex-primary-reset-after-seconds", "500000")
@@ -63,7 +63,6 @@ func TestCalculateOpenAI429ResetTime_5hExhausted(t *testing.T) {
 		t.Fatal("expected non-nil resetAt")
 	}
 
-	// Should be approximately 3600 seconds from now
 	expectedDuration := 3600 * time.Second
 	minExpected := before.Add(expectedDuration)
 	maxExpected := after.Add(expectedDuration)
@@ -73,10 +72,10 @@ func TestCalculateOpenAI429ResetTime_5hExhausted(t *testing.T) {
 	}
 }
 
-func TestCalculateOpenAI429ResetTime_NeitherExhausted_UsesMax(t *testing.T) {
+func TestCalculateOpenAI429ResetTime_NeitherExhausted_SnapshotOnly(t *testing.T) {
 	svc := &RateLimitService{}
 
-	// Neither limit at 100%, should use the longer reset time
+	// Neither long-window nor short-window exhaustion should set account-level lockout.
 	headers := http.Header{}
 	headers.Set("x-codex-primary-used-percent", "80")
 	headers.Set("x-codex-primary-reset-after-seconds", "100000")
@@ -85,21 +84,10 @@ func TestCalculateOpenAI429ResetTime_NeitherExhausted_UsesMax(t *testing.T) {
 	headers.Set("x-codex-secondary-reset-after-seconds", "5000")
 	headers.Set("x-codex-secondary-window-minutes", "300")
 
-	before := time.Now()
 	resetAt := svc.calculateOpenAI429ResetTime(headers)
-	after := time.Now()
 
-	if resetAt == nil {
-		t.Fatal("expected non-nil resetAt")
-	}
-
-	// Should use the max (100000 seconds from 7d window)
-	expectedDuration := 100000 * time.Second
-	minExpected := before.Add(expectedDuration)
-	maxExpected := after.Add(expectedDuration)
-
-	if resetAt.Before(minExpected) || resetAt.After(maxExpected) {
-		t.Errorf("resetAt %v not in expected range [%v, %v]", resetAt, minExpected, maxExpected)
+	if resetAt != nil {
+		t.Errorf("expected nil resetAt when long window is not exhausted, got %v", resetAt)
 	}
 }
 
@@ -137,7 +125,6 @@ func TestCalculateOpenAI429ResetTime_ReversedWindowOrder(t *testing.T) {
 		t.Fatal("expected non-nil resetAt")
 	}
 
-	// Should correctly identify that primary is 5h (smaller window) and use its reset time
 	expectedDuration := 3600 * time.Second
 	minExpected := before.Add(expectedDuration)
 	maxExpected := after.Add(expectedDuration)
@@ -190,6 +177,27 @@ func TestHandle429_OpenAIPersistsCodexSnapshotImmediately(t *testing.T) {
 	if got := repo.updatedExtra["codex_7d_used_percent"]; got != 100.0 {
 		t.Fatalf("codex_7d_used_percent = %v, want 100", got)
 	}
+}
+
+func TestHandle429_OpenAICodexSnapshotOnlyDoesNotSetAccountRateLimit(t *testing.T) {
+	repo := &openAI429SnapshotRepo{}
+	svc := NewRateLimitService(repo, nil, nil, nil, nil)
+	account := &Account{ID: 123, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	headers := http.Header{}
+	headers.Set("x-codex-primary-window-minutes", "300")
+	headers.Set("x-codex-primary-used-percent", "1")
+	headers.Set("x-codex-primary-reset-after-seconds", "3300")
+	headers.Set("x-codex-secondary-window-minutes", "10080")
+	headers.Set("x-codex-secondary-used-percent", "0")
+	headers.Set("x-codex-secondary-reset-after-seconds", "0")
+
+	svc.handle429(context.Background(), account, headers, []byte(`{"error":{"type":"rate_limit_exceeded"}}`))
+
+	require.Zero(t, repo.rateLimitedID)
+	require.NotNil(t, repo.updatedExtra)
+	require.Equal(t, 1.0, repo.updatedExtra["codex_5h_used_percent"])
+	require.Equal(t, 0.0, repo.updatedExtra["codex_7d_used_percent"])
 }
 
 func TestNormalizedCodexLimits(t *testing.T) {

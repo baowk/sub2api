@@ -32,7 +32,8 @@ type stubOpenAIAccountRepo struct {
 
 type snapshotUpdateAccountRepo struct {
 	stubOpenAIAccountRepo
-	updateExtraCalls chan map[string]any
+	updateExtraCalls       chan map[string]any
+	updateCredentialsCalls chan map[string]any
 }
 
 func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
@@ -42,6 +43,17 @@ func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, u
 			copied[k] = v
 		}
 		r.updateExtraCalls <- copied
+	}
+	return nil
+}
+
+func (r *snapshotUpdateAccountRepo) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
+	if r.updateCredentialsCalls != nil {
+		copied := make(map[string]any, len(credentials))
+		for k, v := range credentials {
+			copied[k] = v
+		}
+		r.updateCredentialsCalls <- copied
 	}
 	return nil
 }
@@ -1739,6 +1751,48 @@ func TestOpenAIUpdateCodexUsageSnapshotFromHeaders(t *testing.T) {
 		require.Equal(t, 86400, updates["codex_7d_reset_after_seconds"])
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected UpdateExtra to be called")
+	}
+}
+
+func TestOpenAIHandleErrorResponse_RemovesUnsupportedGPT55FromOAuthAccount(t *testing.T) {
+	repo := &snapshotUpdateAccountRepo{updateCredentialsCalls: make(chan map[string]any, 1)}
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		cfg:         &config.Config{},
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	account := &Account{
+		ID:       68,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"supported_models": []any{"gpt-5.4", "gpt-5.5"},
+			"model_mapping": map[string]any{
+				"gpt-5.4": "gpt-5.4",
+				"gpt-5.5": "gpt-5.5",
+			},
+		},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     make(http.Header),
+		Body: io.NopCloser(strings.NewReader(`{
+			"detail":"The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account."
+		}`)),
+	}
+
+	result, err := svc.handleErrorResponse(context.Background(), resp, c, account, []byte(`{"model":"gpt-5.5"}`))
+	require.Nil(t, result)
+	require.Error(t, err)
+
+	select {
+	case credentials := <-repo.updateCredentialsCalls:
+		require.Equal(t, []string{"gpt-5.4"}, credentials["supported_models"])
+		require.Equal(t, map[string]any{"gpt-5.4": "gpt-5.4"}, credentials["model_mapping"])
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected UpdateCredentials to be called")
 	}
 }
 

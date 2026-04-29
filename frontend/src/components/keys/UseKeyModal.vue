@@ -166,6 +166,8 @@ interface FileConfig {
   highlighted?: string
 }
 
+const OPENAI_USE_KEY_DEFAULT_MODEL = 'gpt-5.5'
+
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
@@ -531,9 +533,9 @@ function generateOpenAIFiles(baseUrl: string, apiKey: string): FileConfig[] {
 
   // config.toml content
   const configContent = `model_provider = "OpenAI"
-model = "gpt-5.4"
-review_model = "gpt-5.4"
-model_reasoning_effort = "xhigh"
+model = "${OPENAI_USE_KEY_DEFAULT_MODEL}"
+review_model = "${OPENAI_USE_KEY_DEFAULT_MODEL}"
+model_reasoning_effort = "medium"
 disable_response_storage = true
 network_access = "enabled"
 windows_wsl_setup_acknowledged = true
@@ -570,9 +572,9 @@ function generateOpenAIWsFiles(baseUrl: string, apiKey: string): FileConfig[] {
 
   // config.toml content with WebSocket v2
   const configContent = `model_provider = "OpenAI"
-model = "gpt-5.4"
-review_model = "gpt-5.4"
-model_reasoning_effort = "xhigh"
+model = "${OPENAI_USE_KEY_DEFAULT_MODEL}"
+review_model = "${OPENAI_USE_KEY_DEFAULT_MODEL}"
+model_reasoning_effort = "medium"
 disable_response_storage = true
 network_access = "enabled"
 windows_wsl_setup_acknowledged = true

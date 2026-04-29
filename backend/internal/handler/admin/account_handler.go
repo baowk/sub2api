@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -90,6 +91,54 @@ func NewAccountHandler(
 		sessionLimitCache:       sessionLimitCache,
 		rpmCache:                rpmCache,
 		tokenCacheInvalidator:   tokenCacheInvalidator,
+	}
+}
+
+func buildOpenAIModelsFromIDs(modelIDs []string) []openai.Model {
+	if len(modelIDs) == 0 {
+		return nil
+	}
+
+	models := make([]openai.Model, 0, len(modelIDs))
+	for _, requestedModel := range modelIDs {
+		var found bool
+		for _, dm := range openai.DefaultModels {
+			if dm.ID == requestedModel {
+				models = append(models, dm)
+				found = true
+				break
+			}
+		}
+		if !found {
+			models = append(models, openai.Model{
+				ID:          requestedModel,
+				Object:      "model",
+				Type:        "model",
+				DisplayName: requestedModel,
+			})
+		}
+	}
+	return models
+}
+
+type openAIAccountInfoFetchMode string
+
+const (
+	openAIAccountInfoFetchModeAll    openAIAccountInfoFetchMode = "all"
+	openAIAccountInfoFetchModePlan   openAIAccountInfoFetchMode = "plan"
+	openAIAccountInfoFetchModeModels openAIAccountInfoFetchMode = "models"
+)
+
+func normalizeOpenAIAccountInfoFetchMode(raw string) openAIAccountInfoFetchMode {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "all":
+		return openAIAccountInfoFetchModeAll
+	case "plan":
+		return openAIAccountInfoFetchModePlan
+	case "models":
+		return openAIAccountInfoFetchModeModels
+	default:
+		return ""
 	}
 }
 
@@ -218,9 +267,11 @@ func (h *AccountHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	platform := c.Query("platform")
 	accountType := c.Query("type")
+	planType := strings.TrimSpace(c.Query("plan_type"))
 	status := c.Query("status")
 	search := c.Query("search")
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	subscriptionExpiry := strings.TrimSpace(c.Query("subscription_expiry"))
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 	// 标准化和验证 search 参数
@@ -248,7 +299,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, planType, status, search, groupID, privacyMode, subscriptionExpiry, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -655,6 +706,11 @@ type TestAccountRequest struct {
 	Mode    string `json:"mode"`
 }
 
+type BatchCompactSupportRequest struct {
+	AccountIDs []int64 `json:"account_ids"`
+	Supported  *bool   `json:"supported"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -693,6 +749,110 @@ func (h *AccountHandler) Test(c *gin.Context) {
 			_ = c.Error(err)
 		}
 	}
+}
+
+// BatchCompactSupport handles batch marking OpenAI /responses/compact capability.
+// POST /api/v1/admin/accounts/batch-compact-support
+func (h *AccountHandler) BatchCompactSupport(c *gin.Context) {
+	var req BatchCompactSupportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if len(req.AccountIDs) == 0 {
+		response.BadRequest(c, "account_ids is required")
+		return
+	}
+
+	ctx := c.Request.Context()
+	accounts, err := h.adminService.GetAccountsByIDs(ctx, req.AccountIDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	foundIDs := make(map[int64]bool, len(accounts))
+	for _, acc := range accounts {
+		if acc != nil {
+			foundIDs[acc.ID] = true
+		}
+	}
+
+	supported := true
+	if req.Supported != nil {
+		supported = *req.Supported
+	}
+
+	const maxConcurrency = 10
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrency)
+
+	var mu sync.Mutex
+	var successCount, failedCount int
+	var errors []gin.H
+
+	for _, id := range req.AccountIDs {
+		if !foundIDs[id] {
+			failedCount++
+			errors = append(errors, gin.H{
+				"account_id": id,
+				"error":      "account not found",
+			})
+		}
+	}
+
+	for _, account := range accounts {
+		acc := account
+		if acc == nil {
+			continue
+		}
+
+		g.Go(func() error {
+			if !acc.IsOpenAI() || (!acc.IsOAuth() && acc.Type != service.AccountTypeAPIKey) {
+				mu.Lock()
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      "only openai oauth and api key accounts support compact probe",
+				})
+				mu.Unlock()
+				return nil
+			}
+
+			_, err := h.adminService.UpdateAccount(gctx, acc.ID, &service.UpdateAccountInput{
+				Extra: map[string]any{
+					"openai_compact_supported":   supported,
+					"openai_compact_checked_at":  time.Now().UTC().Format(time.RFC3339),
+					"openai_compact_last_status": nil,
+					"openai_compact_last_error":  "",
+				},
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      err.Error(),
+				})
+				return nil
+			}
+			successCount++
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"total":   len(req.AccountIDs),
+		"success": successCount,
+		"failed":  failedCount,
+		"errors":  errors,
+	})
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.
@@ -1150,6 +1310,215 @@ func (h *AccountHandler) BatchRefresh(c *gin.Context) {
 		"errors":   errors,
 		"warnings": warnings,
 	})
+}
+
+// BatchFetchAccountInfo handles batch fetching account info for OpenAI OAuth accounts.
+// POST /api/v1/admin/accounts/batch-fetch-account-info
+func (h *AccountHandler) BatchFetchAccountInfo(c *gin.Context) {
+	var req struct {
+		AccountIDs []int64 `json:"account_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if len(req.AccountIDs) == 0 {
+		response.BadRequest(c, "account_ids is required")
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	accounts, err := h.adminService.GetAccountsByIDs(ctx, req.AccountIDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	foundIDs := make(map[int64]bool, len(accounts))
+	for _, acc := range accounts {
+		if acc != nil {
+			foundIDs[acc.ID] = true
+		}
+	}
+
+	const maxConcurrency = 10
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrency)
+
+	var mu sync.Mutex
+	var successCount, failedCount int
+	var errors []gin.H
+	var warnings []gin.H
+
+	for _, id := range req.AccountIDs {
+		if !foundIDs[id] {
+			failedCount++
+			errors = append(errors, gin.H{
+				"account_id": id,
+				"error":      "account not found",
+			})
+		}
+	}
+
+	for _, account := range accounts {
+		acc := account
+		if acc == nil {
+			continue
+		}
+
+		g.Go(func() error {
+			if !acc.IsOpenAIOAuth() {
+				mu.Lock()
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      "only openai oauth accounts support account info fetch",
+				})
+				mu.Unlock()
+				return nil
+			}
+
+			newCredentials, fetchedAny, detailErrors := h.fetchOpenAIAccountInfoCredentials(gctx, acc, openAIAccountInfoFetchModeAll)
+			if !fetchedAny {
+				mu.Lock()
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      strings.Join(detailErrors, "; "),
+				})
+				mu.Unlock()
+				return nil
+			}
+
+			if _, err := h.adminService.UpdateAccount(gctx, acc.ID, &service.UpdateAccountInput{
+				Credentials: newCredentials,
+			}); err != nil {
+				mu.Lock()
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      err.Error(),
+				})
+				mu.Unlock()
+				return nil
+			}
+
+			mu.Lock()
+			successCount++
+			if len(detailErrors) > 0 {
+				warnings = append(warnings, gin.H{
+					"account_id": acc.ID,
+					"warning":    strings.Join(detailErrors, "; "),
+				})
+			}
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"total":    len(req.AccountIDs),
+		"success":  successCount,
+		"failed":   failedCount,
+		"errors":   errors,
+		"warnings": warnings,
+	})
+}
+
+// FetchAccountInfo handles syncing plan/model info for a single OpenAI OAuth account.
+// POST /api/v1/admin/accounts/:id/fetch-account-info
+func (h *AccountHandler) FetchAccountInfo(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	mode := normalizeOpenAIAccountInfoFetchMode(req.Mode)
+	if mode == "" {
+		response.BadRequest(c, "Invalid mode")
+		return
+	}
+
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.NotFound(c, "Account not found")
+		return
+	}
+	if !account.IsOpenAIOAuth() {
+		response.BadRequest(c, "only openai oauth accounts support account info fetch")
+		return
+	}
+
+	newCredentials, fetchedAny, detailErrors := h.fetchOpenAIAccountInfoCredentials(c.Request.Context(), account, mode)
+	if !fetchedAny {
+		response.Error(c, http.StatusBadGateway, strings.Join(detailErrors, "; "))
+		return
+	}
+
+	if _, err := h.adminService.UpdateAccount(c.Request.Context(), account.ID, &service.UpdateAccountInput{
+		Credentials: newCredentials,
+	}); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	updated, err := h.adminService.GetAccount(c.Request.Context(), account.ID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), updated))
+}
+
+func (h *AccountHandler) fetchOpenAIAccountInfoCredentials(ctx context.Context, account *service.Account, mode openAIAccountInfoFetchMode) (map[string]any, bool, []string) {
+	newCredentials := make(map[string]any, len(account.Credentials))
+	for k, v := range account.Credentials {
+		newCredentials[k] = v
+	}
+
+	var detailErrors []string
+	fetchedAny := false
+
+	if mode == openAIAccountInfoFetchModeAll || mode == openAIAccountInfoFetchModePlan {
+		tokenInfo, infoErr := h.openaiOAuthService.FetchAccountInfo(ctx, account)
+		if infoErr != nil {
+			detailErrors = append(detailErrors, "plan_type: "+infoErr.Error())
+		} else {
+			for k, v := range h.openaiOAuthService.BuildAccountCredentials(tokenInfo) {
+				newCredentials[k] = v
+			}
+			fetchedAny = true
+		}
+	}
+
+	if mode == openAIAccountInfoFetchModeAll || mode == openAIAccountInfoFetchModeModels {
+		supportedModels, modelsErr := h.openaiOAuthService.FetchSupportedModels(ctx, account)
+		if modelsErr != nil {
+			detailErrors = append(detailErrors, "supported_models: "+modelsErr.Error())
+		} else if len(supportedModels) > 0 {
+			newCredentials["supported_models"] = supportedModels
+			newCredentials["supported_models_synced_at"] = time.Now().UTC().Format(time.RFC3339)
+			fetchedAny = true
+		}
+	}
+
+	return newCredentials, fetchedAny, detailErrors
 }
 
 // BatchCreate handles batch creating accounts
@@ -1803,6 +2172,11 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
+		if syncedModels := account.GetSupportedModelsSnapshot(); len(syncedModels) > 0 {
+			response.Success(c, buildOpenAIModelsFromIDs(syncedModels))
+			return
+		}
+
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {
 			response.Success(c, openai.DefaultModels)
@@ -2038,7 +2412,7 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 	accounts := make([]*service.Account, 0)
 
 	if len(req.AccountIDs) == 0 {
-		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", "name", "asc")
+		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", "", 0, "", "", "name", "asc")
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return

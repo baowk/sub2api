@@ -5985,13 +5985,13 @@ async function loadWebSearchConfig() {
   try {
     const [resp, proxiesResp] = await Promise.all([
       adminAPI.settings.getWebSearchEmulationConfig(),
-      adminAPI.proxies.list().catch(() => ({ items: [] as Proxy[] })),
+      adminAPI.proxies.getAllWithCount().catch(() => [] as Proxy[]),
     ]);
     if (resp) {
       webSearchConfig.enabled = resp.enabled || false;
       webSearchConfig.providers = resp.providers || [];
     }
-    webSearchProxies.value = proxiesResp.items || [];
+    webSearchProxies.value = proxiesResp || [];
   } catch (err: unknown) {
     // 404 is expected when config hasn't been created yet; show error for other failures
     const status = (err as { status?: number })?.status;

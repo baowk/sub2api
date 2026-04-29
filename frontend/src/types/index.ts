@@ -592,6 +592,46 @@ export interface UpdateApiKeyRequest {
   reset_rate_limit_usage?: boolean
 }
 
+export interface ChatSession {
+  id: number
+  request_id?: string | null
+  user_id: number
+  api_key_id: number
+  account_id?: number | null
+  group_id?: number | null
+  platform: string
+  model: string
+  requested_model?: string | null
+  upstream_model?: string | null
+  inbound_endpoint?: string | null
+  upstream_endpoint?: string | null
+  request_type: 'unknown' | 'sync' | 'stream' | 'ws_v2' | number
+  stream: boolean
+  status: string
+  http_status_code: number
+  user_preview?: string | null
+  assistant_preview?: string | null
+  message_count: number
+  created_at: string
+}
+
+export interface ChatSessionMessage {
+  id: number
+  session_id: number
+  seq: number
+  role: string
+  direction: 'inbound' | 'outbound'
+  content_text: string
+  content_json?: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface ChatSessionDetail extends ChatSession {
+  messages: ChatSessionMessage[]
+}
+
+export interface ChatMessage extends ChatSessionMessage {}
+
 export interface CreateGroupRequest {
   name: string
   description?: string | null

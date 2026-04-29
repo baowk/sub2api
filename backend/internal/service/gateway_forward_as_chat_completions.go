@@ -309,6 +309,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	// Chain: Anthropic → Responses → Chat Completions
 	responsesResp := apicompat.AnthropicToResponsesResponse(finalResp)
 	ccResp := apicompat.ResponsesToChatCompletions(responsesResp, originalModel)
+	finalOutputText := extractChatCompletionsAssistantText(ccResp)
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -330,6 +331,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		ReasoningEffort: reasoningEffort,
 		Stream:          false,
 		Duration:        time.Since(startTime),
+		FinalOutputText: finalOutputText,
 	}, nil
 }
 

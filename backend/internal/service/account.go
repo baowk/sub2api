@@ -274,6 +274,55 @@ func (a *Account) GetCredentialAsInt64(key string) int64 {
 	return 0
 }
 
+func (a *Account) GetSupportedModelsSnapshot() []string {
+	if a == nil || a.Credentials == nil {
+		return nil
+	}
+	raw, ok := a.Credentials["supported_models"]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	switch v := raw.(type) {
+	case []string:
+		return normalizeSupportedModels(v)
+	case []any:
+		models := make([]string, 0, len(v))
+		for _, item := range v {
+			if modelID, ok := item.(string); ok {
+				models = append(models, modelID)
+			}
+		}
+		return normalizeSupportedModels(models)
+	default:
+		return nil
+	}
+}
+
+func normalizeSupportedModels(models []string) []string {
+	if len(models) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(models))
+	out := make([]string, 0, len(models))
+	for _, modelID := range models {
+		trimmed := strings.TrimSpace(modelID)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (a *Account) IsTempUnschedulableEnabled() bool {
 	if a.Credentials == nil {
 		return false
@@ -1133,6 +1182,19 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 		return enabled
 	}
 	if enabled, ok := a.Extra["openai_oauth_passthrough"].(bool); ok {
+		return enabled
+	}
+	return false
+}
+
+// IsOpenAIChatCompletionsCompatEnabled returns whether an OpenAI API Key
+// account should call an OpenAI-compatible /v1/chat/completions upstream
+// instead of the Responses API.
+func (a *Account) IsOpenAIChatCompletionsCompatEnabled() bool {
+	if a == nil || !a.IsOpenAIApiKey() || a.Extra == nil {
+		return false
+	}
+	if enabled, ok := a.Extra["openai_chat_completions_compat"].(bool); ok {
 		return enabled
 	}
 	return false

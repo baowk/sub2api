@@ -817,16 +817,21 @@ func (s *RateLimitService) handleCustomErrorCode(ctx context.Context, account *A
 // handle429 处理429限流错误
 // 解析响应头获取重置时间，标记账号为限流状态
 func (s *RateLimitService) handle429(ctx context.Context, account *Account, headers http.Header, responseBody []byte) {
+	openAICodexSnapshotOnly := false
+
 	// 1. OpenAI 平台：优先尝试解析 x-codex-* 响应头（用于 rate_limit_exceeded）
 	if account.Platform == PlatformOpenAI {
 		s.persistOpenAICodexSnapshot(ctx, account, headers)
-		if resetAt := s.calculateOpenAI429ResetTime(headers); resetAt != nil {
-			if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
-				slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
+		if ParseCodexRateLimitHeaders(headers) != nil {
+			if resetAt := s.calculateOpenAI429ResetTime(headers); resetAt != nil {
+				if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
+					slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
+					return
+				}
+				slog.Info("openai_account_rate_limited", "account_id", account.ID, "reset_at", *resetAt)
 				return
 			}
-			slog.Info("openai_account_rate_limited", "account_id", account.ID, "reset_at", *resetAt)
-			return
+			openAICodexSnapshotOnly = true
 		}
 	}
 
@@ -866,6 +871,10 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 					return
 				}
 				slog.Info("account_rate_limited", "account_id", account.ID, "platform", account.Platform, "reset_at", resetTime, "reset_in", time.Until(resetTime).Truncate(time.Second))
+				return
+			}
+			if openAICodexSnapshotOnly {
+				slog.Info("openai_429_snapshot_saved_without_global_rate_limit", "account_id", account.ID)
 				return
 			}
 		case PlatformGemini, PlatformAntigravity:
@@ -929,8 +938,8 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	slog.Info("account_rate_limited", "account_id", account.ID, "reset_at", resetAt)
 }
 
-// calculateOpenAI429ResetTime 从 OpenAI 429 响应头计算正确的重置时间
-// 返回 nil 表示无法从响应头中确定重置时间
+// calculateOpenAI429ResetTime 从 OpenAI 429 响应头计算账号级重置时间。
+// 7d 长周期耗尽优先使用 7d 恢复时间；否则 5h 短窗口耗尽时使用 5h 恢复时间。
 func calculateOpenAI429ResetTime(headers http.Header) *time.Time {
 	snapshot := ParseCodexRateLimitHeaders(headers)
 	if snapshot == nil {
@@ -944,11 +953,9 @@ func calculateOpenAI429ResetTime(headers http.Header) *time.Time {
 
 	now := time.Now()
 
-	// 判断哪个限制被触发（used_percent >= 100）
 	is7dExhausted := normalized.Used7dPercent != nil && *normalized.Used7dPercent >= 100
 	is5hExhausted := normalized.Used5hPercent != nil && *normalized.Used5hPercent >= 100
 
-	// 优先使用被触发限制的重置时间
 	if is7dExhausted && normalized.Reset7dSeconds != nil {
 		resetAt := now.Add(time.Duration(*normalized.Reset7dSeconds) * time.Second)
 		slog.Info("openai_429_7d_limit_exhausted", "reset_after_seconds", *normalized.Reset7dSeconds, "reset_at", resetAt)
@@ -960,21 +967,27 @@ func calculateOpenAI429ResetTime(headers http.Header) *time.Time {
 		return &resetAt
 	}
 
-	// 都未达到100%但收到429，使用较长的重置时间
-	var maxResetSecs int
-	if normalized.Reset7dSeconds != nil && *normalized.Reset7dSeconds > maxResetSecs {
-		maxResetSecs = *normalized.Reset7dSeconds
-	}
-	if normalized.Reset5hSeconds != nil && *normalized.Reset5hSeconds > maxResetSecs {
-		maxResetSecs = *normalized.Reset5hSeconds
-	}
-	if maxResetSecs > 0 {
-		resetAt := now.Add(time.Duration(maxResetSecs) * time.Second)
-		slog.Info("openai_429_using_max_reset", "max_reset_seconds", maxResetSecs, "reset_at", resetAt)
-		return &resetAt
-	}
+	slog.Info("openai_429_codex_snapshot_only",
+		"used_5h_percent", derefFloat64ForLog(normalized.Used5hPercent),
+		"used_7d_percent", derefFloat64ForLog(normalized.Used7dPercent),
+		"reset_5h_seconds", derefIntForLog(normalized.Reset5hSeconds),
+		"reset_7d_seconds", derefIntForLog(normalized.Reset7dSeconds))
 
 	return nil
+}
+
+func derefFloat64ForLog(v *float64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func derefIntForLog(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 func (s *RateLimitService) calculateOpenAI429ResetTime(headers http.Header) *time.Time {
@@ -1101,7 +1114,9 @@ func (s *RateLimitService) persistOpenAICodexSnapshot(ctx context.Context, accou
 	}
 	if err := s.accountRepo.UpdateExtra(ctx, account.ID, updates); err != nil {
 		slog.Warn("openai_codex_snapshot_persist_failed", "account_id", account.ID, "error", err)
+		return
 	}
+	syncOpenAICodexAccountRateLimitFromUsageWindow(ctx, s.accountRepo, account.ID, updates, time.Now())
 }
 
 // parseOpenAIRateLimitResetTime 解析 OpenAI 格式的 429 响应，返回重置时间的 Unix 时间戳

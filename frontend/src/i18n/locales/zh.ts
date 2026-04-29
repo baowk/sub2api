@@ -2636,6 +2636,7 @@ export default {
       // Filter options
       allPlatforms: '全部平台',
       allTypes: '全部类型',
+      allPlanTypes: '全部套餐',
       allStatus: '全部状态',
       allGroups: '全部分组',
       ungroupedGroup: '未分配分组',
@@ -2675,6 +2676,9 @@ export default {
       privacyAntigravitySet: '已关闭遥测和营销邮件',
       privacyAntigravityFailed: '隐私设置失败',
       setPrivacy: '设置隐私',
+      syncPlan: '同步套餐',
+      syncPlanSuccess: '已同步账号套餐信息',
+      syncPlanFailed: '同步账号套餐信息失败',
       subscriptionAbnormal: '异常',
       subscriptionExpires: '到期',
       // 容量状态提示
@@ -2916,8 +2920,13 @@ export default {
         enableScheduling: '批量启用调度',
         disableScheduling: '批量停止调度',
         resetStatus: '批量重置状态',
+        fetchAccountInfo: '批量同步套餐和模型',
+        compactSupport: '批量标记支持 Compact',
         refreshToken: '批量刷新令牌',
         resetStatusSuccess: '已成功重置 {count} 个账号状态',
+        fetchAccountInfoSuccess: '已成功同步 {count} 个账号的套餐和模型',
+        compactSupportSuccess: '已标记 {count} 个账号支持 Compact',
+        compactSupportPartial: 'Compact 标记部分完成：成功 {success} 个，失败 {failed} 个',
         refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
         partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
       },
@@ -2978,6 +2987,9 @@ export default {
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',
+        chatCompletionsCompat: 'Chat Completions 兼容上游',
+        chatCompletionsCompatDesc:
+          '仅对 OpenAI API Key 生效。适用于只支持 /v1/chat/completions 的 OpenAI 兼容上游。开启后，账号测试连接和 /v1/chat/completions 请求将改走 Chat Completions 端点；/v1/responses 不适用。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '默认关闭。开启后可启用 responses_websockets_v2 协议能力（受网关全局开关与账号类型开关约束）。',
@@ -3035,6 +3047,9 @@ export default {
       mapRequestModels: '将请求模型映射到实际模型。左边是请求的模型，右边是发送到 API 的实际模型。',
       selectedModels: '已选择 {count} 个模型',
       supportsAllModels: '（支持所有模型）',
+      openaiWhitelistUpgradeHint: '检测到这是旧版 OpenAI 模型白名单，可一键补齐到最新 GPT-5 预设，并保留你额外手工添加的模型。',
+      openaiWhitelistUpgradeAction: '补齐最新 GPT-5 预设',
+      openaiWhitelistSynced: '已补齐最新 GPT-5 预设',
       requestModel: '请求模型',
       actualModel: '实际模型',
       addMapping: '添加映射',

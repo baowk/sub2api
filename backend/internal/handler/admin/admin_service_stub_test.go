@@ -23,6 +23,7 @@ type stubAdminService struct {
 	createdProxies       []*service.CreateProxyInput
 	updatedProxyIDs      []int64
 	updatedProxies       []*service.UpdateProxyInput
+	updatedAccounts      map[int64]*service.UpdateAccountInput
 	testedProxyIDs       []int64
 	createAccountErr     error
 	updateAccountErr     error
@@ -36,6 +37,7 @@ type stubAdminService struct {
 	lastListAccounts struct {
 		platform    string
 		accountType string
+		planType    string
 		status      string
 		search      string
 		groupID     int64
@@ -126,13 +128,14 @@ func newStubAdminService() *stubAdminService {
 		CreatedAt: now,
 	}
 	return &stubAdminService{
-		users:       []service.User{user},
-		apiKeys:     []service.APIKey{apiKey},
-		groups:      []service.Group{group},
-		accounts:    []service.Account{account},
-		proxies:     []service.Proxy{proxy},
-		proxyCounts: []service.ProxyWithAccountCount{{Proxy: proxy, AccountCount: 1}},
-		redeems:     []service.RedeemCode{redeem},
+		users:           []service.User{user},
+		apiKeys:         []service.APIKey{apiKey},
+		groups:          []service.Group{group},
+		accounts:        []service.Account{account},
+		updatedAccounts: make(map[int64]*service.UpdateAccountInput),
+		proxies:         []service.Proxy{proxy},
+		proxyCounts:     []service.ProxyWithAccountCount{{Proxy: proxy, AccountCount: 1}},
+		redeems:         []service.RedeemCode{redeem},
 	}
 }
 
@@ -295,9 +298,10 @@ func (s *stubAdminService) BatchSetGroupRPMOverrides(_ context.Context, _ int64,
 	return nil
 }
 
-func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]service.Account, int64, error) {
+func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, planType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]service.Account, int64, error) {
 	s.lastListAccounts.platform = platform
 	s.lastListAccounts.accountType = accountType
+	s.lastListAccounts.planType = planType
 	s.lastListAccounts.status = status
 	s.lastListAccounts.search = search
 	s.lastListAccounts.groupID = groupID
@@ -309,6 +313,12 @@ func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int,
 }
 
 func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.Account, error) {
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			account := s.accounts[i]
+			return &account, nil
+		}
+	}
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 	return &account, nil
 }
@@ -316,6 +326,18 @@ func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.A
 func (s *stubAdminService) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*service.Account, error) {
 	out := make([]*service.Account, 0, len(ids))
 	for _, id := range ids {
+		var found *service.Account
+		for i := range s.accounts {
+			if s.accounts[i].ID == id {
+				account := s.accounts[i]
+				found = &account
+				break
+			}
+		}
+		if found != nil {
+			out = append(out, found)
+			continue
+		}
 		account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 		out = append(out, &account)
 	}
@@ -334,10 +356,13 @@ func (s *stubAdminService) CreateAccount(ctx context.Context, input *service.Cre
 }
 
 func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error) {
+	s.mu.Lock()
+	s.updatedAccounts[id] = input
+	s.mu.Unlock()
 	if s.updateAccountErr != nil {
 		return nil, s.updateAccountErr
 	}
-	account := service.Account{ID: id, Name: input.Name, Status: service.StatusActive}
+	account := service.Account{ID: id, Name: input.Name, Status: service.StatusActive, Credentials: input.Credentials}
 	return &account, nil
 }
 

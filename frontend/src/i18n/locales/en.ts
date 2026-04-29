@@ -2557,6 +2557,7 @@ export default {
       notesHint: 'Notes are optional',
       allPlatforms: 'All Platforms',
       allTypes: 'All Types',
+      allPlanTypes: 'All Plans',
       allStatus: 'All Status',
       allGroups: 'All Groups',
       ungroupedGroup: 'Ungrouped',
@@ -2637,6 +2638,9 @@ export default {
       privacyAntigravitySet: 'Telemetry and marketing emails disabled',
       privacyAntigravityFailed: 'Privacy setting failed',
       setPrivacy: 'Set Privacy',
+      syncPlan: 'Sync Plan',
+      syncPlanSuccess: 'Plan info synced',
+      syncPlanFailed: 'Failed to sync plan info',
       subscriptionAbnormal: 'Abnormal',
       subscriptionExpires: 'Expires',
       // Capacity status tooltips
@@ -2769,8 +2773,13 @@ export default {
         enableScheduling: 'Enable Scheduling',
         disableScheduling: 'Disable Scheduling',
         resetStatus: 'Reset Status',
+        fetchAccountInfo: 'Sync Plan & Models',
+        compactSupport: 'Mark Compact Supported',
         refreshToken: 'Refresh Token',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
+        fetchAccountInfoSuccess: 'Successfully synced plan and models for {count} account(s)',
+        compactSupportSuccess: 'Marked {count} account(s) as Compact supported',
+        compactSupportPartial: 'Compact marking partially completed: {success} succeeded, {failed} failed',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
         partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
       },
@@ -2830,6 +2839,9 @@ export default {
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',
+        chatCompletionsCompat: 'Chat Completions compatible upstream',
+        chatCompletionsCompatDesc:
+          'OpenAI API Key only. Use this for OpenAI-compatible upstreams that only expose /v1/chat/completions. When enabled, account testing and /v1/chat/completions requests use the Chat Completions endpoint; /v1/responses is not supported.',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           'Disabled by default. Enable to allow responses_websockets_v2 capability (still gated by global and account-type switches).',
@@ -2891,6 +2903,9 @@ export default {
         'Map request models to actual models. Left is the requested model, right is the actual model sent to API.',
       selectedModels: 'Selected {count} model(s)',
       supportsAllModels: '(supports all models)',
+      openaiWhitelistUpgradeHint: 'This OpenAI whitelist is outdated. Merge in the latest GPT-5 preset while keeping your extra custom models.',
+      openaiWhitelistUpgradeAction: 'Sync latest GPT-5 preset',
+      openaiWhitelistSynced: 'Latest GPT-5 preset added',
       requestModel: 'Request model',
       actualModel: 'Actual model',
       addMapping: 'Add Mapping',

@@ -141,7 +141,7 @@
         </div>
       </template>
       <template #table>
-        <AccountBulkActionsBar :selected-ids="selIds" @delete="handleBulkDelete" @reset-status="handleBulkResetStatus" @refresh-token="handleBulkRefreshToken" @edit="showBulkEdit = true" @clear="clearSelection" @select-page="selectPage" @toggle-schedulable="handleBulkToggleSchedulable" />
+        <AccountBulkActionsBar :selected-ids="selIds" @delete="handleBulkDelete" @reset-status="handleBulkResetStatus" @fetch-account-info="handleBulkFetchAccountInfo" @compact-support="handleBulkCompactSupport" @refresh-token="handleBulkRefreshToken" @edit="showBulkEdit = true" @clear="clearSelection" @select-page="selectPage" @toggle-schedulable="handleBulkToggleSchedulable" />
         <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DataTable
           ref="dataTableRef"
@@ -170,7 +170,7 @@
             <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
           </template>
           <template #cell-name="{ row, value }">
-            <div class="flex flex-col">
+            <div class="flex flex-col gap-0.5">
               <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
               <span
                 v-if="row.extra?.email_address"
@@ -179,6 +179,13 @@
               >
                 {{ row.extra.email_address }}
               </span>
+              <span
+                v-if="getSubscriptionExpiresLabel(row)"
+                :class="['text-xs font-medium', getSubscriptionExpiresClass(row)]"
+                :title="String(row.credentials?.subscription_expires_at || '')"
+              >
+                {{ getSubscriptionExpiresLabel(row) }}
+              </span>
             </div>
           </template>
           <template #cell-notes="{ value }">
@@ -186,21 +193,44 @@
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
           </template>
           <template #cell-platform_type="{ row }">
-            <div class="flex flex-wrap items-center gap-1">
-              <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
-              <span
-                v-if="getOpenAICompactLabel(row)"
-                :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getOpenAICompactClass(row)]"
-                :title="getOpenAICompactTitle(row)"
-              >
-                {{ getOpenAICompactLabel(row) }}
-              </span>
-              <span
-                v-if="getAntigravityTierLabel(row)"
-                :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
-              >
-                {{ getAntigravityTierLabel(row) }}
-              </span>
+            <div class="flex min-w-0 flex-col gap-1.5">
+              <div class="flex flex-wrap items-center gap-1">
+                <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" />
+              </div>
+              <div class="flex flex-col items-start gap-1">
+                <span
+                  v-if="getOpenAICompactLabel(row)"
+                  :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getOpenAICompactClass(row)]"
+                  :title="getOpenAICompactTitle(row)"
+                >
+                  {{ getOpenAICompactLabel(row) }}
+                </span>
+                <span
+                  v-if="getAntigravityTierLabel(row)"
+                  :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
+                >
+                  {{ getAntigravityTierLabel(row) }}
+                </span>
+                <div
+                  v-if="getAccountModelPreview(row).length > 0"
+                  class="flex max-w-[260px] flex-wrap items-center gap-1"
+                  :title="getAccountModelsTooltip(row)"
+                >
+                  <span
+                    v-for="model in getAccountModelPreview(row)"
+                    :key="model"
+                    class="inline-flex max-w-[120px] items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-slate-700 dark:bg-dark-600 dark:text-dark-200"
+                  >
+                    <span class="truncate">{{ model }}</span>
+                  </span>
+                  <span
+                    v-if="getAccountHiddenModelCount(row) > 0"
+                    class="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-slate-500 dark:bg-dark-700 dark:text-dark-300"
+                  >
+                    +{{ getAccountHiddenModelCount(row) }}
+                  </span>
+                </div>
+              </div>
             </div>
           </template>
           <template #cell-capacity="{ row }">
@@ -297,10 +327,10 @@
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
-    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
+    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" @tested="handleAccountTested" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @sync-plan="handleSyncPlan" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal :show="showBulkEdit" :account-ids="selIds" :selected-platforms="selPlatforms" :selected-types="selTypes" :proxies="proxies" :groups="groups" @close="showBulkEdit = false" @updated="handleBulkUpdated" />
@@ -354,6 +384,7 @@ import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRules
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
+import { getModelsByPlatform } from '@/composables/useModelWhitelist'
 import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -643,8 +674,10 @@ const {
   initialParams: {
     platform: '',
     type: '',
+    plan_type: '',
     status: '',
     privacy_mode: '',
+    subscription_expiry: '',
     group: '',
     search: '',
     sort_by: sortState.sort_by,
@@ -846,6 +879,7 @@ const refreshAccountsIncrementally = async () => {
       toRaw(params) as {
         platform?: string
         type?: string
+        plan_type?: string
         status?: string
         privacy_mode?: string
         group?: string
@@ -976,6 +1010,90 @@ function getOpenAICompactTitle(row: any): string {
   return `${getOpenAICompactLabel(row)} | ${t('admin.accounts.openai.compactLastChecked')}: ${formatDateTime(new Date(checkedAt))}`
 }
 
+function getSubscriptionExpiresDate(row: Account): Date | null {
+  const credentials = row.credentials as Record<string, unknown> | undefined
+  const planType = typeof credentials?.plan_type === 'string' ? credentials.plan_type.trim().toLowerCase() : ''
+  if (!planType || planType === 'free') return null
+
+  const rawExpiresAt = credentials?.subscription_expires_at
+  if (typeof rawExpiresAt !== 'string' || rawExpiresAt.trim() === '') return null
+
+  const expiresAt = new Date(rawExpiresAt)
+  return Number.isNaN(expiresAt.getTime()) ? null : expiresAt
+}
+
+function getSubscriptionExpiresLabel(row: Account): string {
+  const expiresAt = getSubscriptionExpiresDate(row)
+  if (!expiresAt) return ''
+
+  const yyyy = expiresAt.getFullYear()
+  const mm = String(expiresAt.getMonth() + 1).padStart(2, '0')
+  const dd = String(expiresAt.getDate()).padStart(2, '0')
+  return `${t('admin.accounts.subscriptionExpires')} ${yyyy}-${mm}-${dd}`
+}
+
+function getSubscriptionExpiresClass(row: Account): string {
+  const expiresAt = getSubscriptionExpiresDate(row)
+  if (!expiresAt) return 'text-gray-400 dark:text-gray-500'
+
+  const daysRemaining = Math.ceil((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  if (daysRemaining <= 3) return 'text-red-600 dark:text-red-400'
+  if (daysRemaining <= 7) return 'text-amber-600 dark:text-amber-400'
+  return 'text-gray-400 dark:text-gray-500'
+}
+
+function getAccountConfiguredModels(row: Account): string[] {
+  const credentials = row.credentials as Record<string, unknown> | undefined
+  if (!credentials) return []
+
+  const rawSupported = credentials.supported_models
+  const supported = Array.isArray(rawSupported)
+    ? rawSupported.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
+    : []
+
+  const rawMapping = credentials.model_mapping
+  const mappingKeys = rawMapping && typeof rawMapping === 'object' && !Array.isArray(rawMapping)
+    ? Object.keys(rawMapping as Record<string, unknown>).map((item) => item.trim()).filter(Boolean)
+    : []
+
+  const merged = [...new Set([...supported, ...mappingKeys])]
+  return sortAccountConfiguredModels(row.platform, merged)
+}
+
+function sortAccountConfiguredModels(platform: AccountPlatform, models: string[]): string[] {
+  if (models.length <= 1) return models
+
+  if (platform === 'openai') {
+    const preferredOrder = getModelsByPlatform('openai')
+    const orderIndex = new Map(preferredOrder.map((model, index) => [model, index]))
+    return [...models].sort((a, b) => {
+      const aIndex = orderIndex.get(a)
+      const bIndex = orderIndex.get(b)
+      if (aIndex !== undefined && bIndex !== undefined) return aIndex - bIndex
+      if (aIndex !== undefined) return -1
+      if (bIndex !== undefined) return 1
+      return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    })
+  }
+
+  return [...models].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+}
+
+function getAccountModelPreview(row: Account): string[] {
+  const models = getAccountConfiguredModels(row)
+  return models.slice(0, 2)
+}
+
+function getAccountHiddenModelCount(row: Account): number {
+  const total = getAccountConfiguredModels(row).length
+  return Math.max(0, total - 2)
+}
+
+function getAccountModelsTooltip(row: Account): string {
+  const models = getAccountConfiguredModels(row)
+  return models.join('\n')
+}
+
 function getAntigravityTierClass(row: any): string {
   const tier = getAntigravityTierFromRow(row)
   switch (tier) {
@@ -1095,6 +1213,41 @@ const handleBulkResetStatus = async () => {
     reload()
   } catch (error) {
     console.error('Failed to bulk reset status:', error)
+    appStore.showError(String(error))
+  }
+}
+const handleBulkFetchAccountInfo = async () => {
+  if (!confirm(t('common.confirm'))) return
+  try {
+    const result = await adminAPI.accounts.batchFetchAccountInfo(selIds.value)
+    if (result.failed > 0) {
+      appStore.showError(t('admin.accounts.bulkActions.partialSuccess', { success: result.success, failed: result.failed }))
+    } else {
+      appStore.showSuccess(t('admin.accounts.bulkActions.fetchAccountInfoSuccess', { count: result.success }))
+      clearSelection()
+    }
+    if (result.warnings && result.warnings.length > 0) {
+      appStore.showWarning(result.warnings[0].warning)
+    }
+    reload()
+  } catch (error) {
+    console.error('Failed to bulk fetch account info:', error)
+    appStore.showError(String(error))
+  }
+}
+const handleBulkCompactSupport = async () => {
+  if (!confirm(t('common.confirm'))) return
+  try {
+    const result = await adminAPI.accounts.batchCompactSupport(selIds.value)
+    if (result.failed > 0) {
+      appStore.showError(t('admin.accounts.bulkActions.compactSupportPartial', { success: result.success, failed: result.failed }))
+    } else {
+      appStore.showSuccess(t('admin.accounts.bulkActions.compactSupportSuccess', { count: result.success }))
+      clearSelection()
+    }
+    await load()
+  } catch (error) {
+    console.error('Failed to bulk mark compact support:', error)
     appStore.showError(String(error))
   }
 }
@@ -1223,9 +1376,11 @@ const ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE = '__unset__'
 const buildAccountQueryFilters = () => ({
   platform: params.platform || '',
   type: params.type || '',
+  plan_type: params.plan_type || '',
   status: params.status || '',
   group: params.group || '',
   privacy_mode: params.privacy_mode || '',
+  subscription_expiry: params.subscription_expiry || '',
   search: params.search || '',
   sort_by: sortState.sort_by,
   sort_order: sortState.sort_order
@@ -1234,6 +1389,7 @@ const accountMatchesCurrentFilters = (account: Account) => {
   const filters = buildAccountQueryFilters()
   if (filters.platform && account.platform !== filters.platform) return false
   if (filters.type && account.type !== filters.type) return false
+  if (filters.plan_type && !accountMatchesPlanType(account, filters.plan_type)) return false
   if (filters.status) {
     const now = Date.now()
     const rateLimitResetAt = account.rate_limit_reset_at ? new Date(account.rate_limit_reset_at).getTime() : Number.NaN
@@ -1269,9 +1425,44 @@ const accountMatchesCurrentFilters = (account: Account) => {
       return false
     }
   }
+  if (filters.subscription_expiry && !accountMatchesSubscriptionExpiry(account, filters.subscription_expiry)) return false
   const search = String(filters.search || '').trim().toLowerCase()
   if (search && !account.name.toLowerCase().includes(search)) return false
   return true
+}
+
+const accountMatchesPlanType = (account: Account, planType: string): boolean => {
+  const normalized = normalizePlanType(account.credentials?.plan_type)
+  const expected = normalizePlanType(planType)
+  return normalized !== '' && normalized === expected
+}
+
+const accountMatchesSubscriptionExpiry = (account: Account, filter: string): boolean => {
+  const expiresAt = getSubscriptionExpiresDate(account)
+  if (filter === 'missing') return !expiresAt
+  if (filter === 'has') return !!expiresAt
+  if (!expiresAt) return false
+
+  const diffMs = expiresAt.getTime() - Date.now()
+  switch (filter) {
+    case 'expired':
+      return diffMs <= 0
+    case 'expiring_3d':
+      return diffMs > 0 && diffMs <= 3 * 24 * 60 * 60 * 1000
+    case 'expiring_7d':
+      return diffMs > 0 && diffMs <= 7 * 24 * 60 * 60 * 1000
+    case 'expiring_30d':
+      return diffMs > 0 && diffMs <= 30 * 24 * 60 * 60 * 1000
+    default:
+      return true
+  }
+}
+
+const normalizePlanType = (planType: unknown): string => {
+  const value = String(planType || '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+  if (value === 'chatgptpro') return 'pro'
+  if (value === 'prolite' || value === 'chatgptprolite') return 'prolite'
+  return value
 }
 const mergeRuntimeFields = (oldAccount: Account, updatedAccount: Account): Account => ({
   ...updatedAccount,
@@ -1356,6 +1547,15 @@ const handleExportData = async () => {
   }
 }
 const closeTestModal = () => { showTest.value = false; testingAcc.value = null }
+const handleAccountTested = async (accountId: number) => {
+  try {
+    const updatedAccount = await adminAPI.accounts.getById(accountId)
+    patchAccountInList(updatedAccount)
+    enterAutoRefreshSilentWindow()
+  } catch (error) {
+    console.error('Failed to refresh tested account:', error)
+  }
+}
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
 const handleTest = (a: Account) => { testingAcc.value = a; showTest.value = true }
@@ -1380,6 +1580,17 @@ const handleRefresh = async (a: Account) => {
     enterAutoRefreshSilentWindow()
   } catch (error) {
     console.error('Failed to refresh credentials:', error)
+  }
+}
+const handleSyncPlan = async (a: Account) => {
+  try {
+    const updated = await adminAPI.accounts.fetchAccountInfo(a.id, 'plan')
+    patchAccountInList(updated)
+    enterAutoRefreshSilentWindow()
+    appStore.showSuccess(t('admin.accounts.syncPlanSuccess'))
+  } catch (error: any) {
+    console.error('Failed to sync plan:', error)
+    appStore.showError(error?.response?.data?.message || t('admin.accounts.syncPlanFailed'))
   }
 }
 const handleRecoverState = async (a: Account) => {
