@@ -283,7 +283,11 @@ func (s *OpenAIOAuthService) enrichTokenInfo(ctx context.Context, tokenInfo *Ope
 		}
 	}
 	if info := fetchChatGPTAccountInfo(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL, orgID); info != nil {
-		if info.PlanType != "" {
+		// chatgpt_plan_type from the ID token is the canonical personal-plan value.
+		// accounts/check is a multi-account/workspace endpoint; inactive team or
+		// business workspaces can otherwise overwrite Pro/Free with internal
+		// workspace billing plan names such as self_serve_business_usage_based.
+		if shouldApplyChatGPTAccountInfoPlanType(tokenInfo.PlanType, info.PlanType) {
 			tokenInfo.PlanType = info.PlanType
 		}
 		if info.SubscriptionExpiresAt != "" {
@@ -349,7 +353,7 @@ func (s *OpenAIOAuthService) FetchAccountInfo(ctx context.Context, account *Acco
 		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_ACCOUNT_INFO_FETCH_FAILED", "failed to fetch account info")
 	}
 
-	if info.PlanType != "" {
+	if shouldApplyChatGPTAccountInfoPlanType(tokenInfo.PlanType, info.PlanType) {
 		tokenInfo.PlanType = info.PlanType
 	}
 	if info.SubscriptionExpiresAt != "" {
@@ -386,6 +390,10 @@ func (s *OpenAIOAuthService) FetchSupportedModels(ctx context.Context, account *
 	}
 
 	return models, nil
+}
+
+func shouldApplyChatGPTAccountInfoPlanType(current, candidate string) bool {
+	return strings.TrimSpace(candidate) != "" && strings.TrimSpace(current) == ""
 }
 
 func resolveChatGPTSubscriptionAccountID(tokenInfo *OpenAITokenInfo, orgID string) string {
