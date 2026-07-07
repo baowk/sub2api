@@ -50,6 +50,10 @@ func (s *accountRepoStubForAdminList) ListWithFilters(_ context.Context, params 
 	return s.listWithFiltersAccounts, result, nil
 }
 
+func (s *accountRepoStubForAdminList) ListAllWithFilters(context.Context, string, string, string, string, int64, string) ([]Account, error) {
+	return nil, nil
+}
+
 type proxyRepoStubForAdminList struct {
 	proxyRepoStub
 
