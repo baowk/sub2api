@@ -231,10 +231,9 @@ func isOpenAICompatibleAccountEligibleForRequest(ctx context.Context, account *A
 }
 
 // isOpenAIAccountModelSchedulable keeps OAuth accounts close to upstream's
-// default behavior: new models are allowed to try unless another explicit
-// request-level restriction blocks them. API-key accounts still use
-// model_mapping as their allowlist because it describes the configured upstream
-// model surface for that key.
+// default behavior: new models are allowed to try even when older model_mapping
+// entries exist. Spark is the exception: it has a separate quota lane and shadow
+// rows, so spark requests and spark-only rows must remain explicit allowlists.
 func isOpenAIAccountModelSchedulable(account *Account, requestedModel string) bool {
 	if account == nil || strings.TrimSpace(requestedModel) == "" {
 		return true
@@ -243,9 +242,29 @@ func isOpenAIAccountModelSchedulable(account *Account, requestedModel string) bo
 		return account.IsModelSupported(requestedModel)
 	}
 	if account.Type == AccountTypeOAuth || account.Type == AccountTypeSetupToken {
+		mapping := account.GetModelMapping()
+		if isOpenAICodexSparkModel(requestedModel) || account.IsShadow() || isSparkOnlyModelMapping(mapping) {
+			return account.IsModelSupported(requestedModel)
+		}
 		return true
 	}
 	return account.IsModelSupported(requestedModel)
+}
+
+func isOpenAICodexSparkModel(model string) bool {
+	return normalizeKnownOpenAICodexModel(model) == "gpt-5.3-codex-spark"
+}
+
+func isSparkOnlyModelMapping(mapping map[string]string) bool {
+	if len(mapping) == 0 {
+		return false
+	}
+	for key, value := range mapping {
+		if !isOpenAICodexSparkModel(key) && !isOpenAICodexSparkModel(value) {
+			return false
+		}
+	}
+	return true
 }
 
 type openAIQuotaAutoPauseDecision struct {
