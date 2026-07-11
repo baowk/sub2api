@@ -16,6 +16,7 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('gpt-5.4-mini')
     expect(models).toContain('gpt-5.4-2026-03-05')
     expect(models).toContain('codex-auto-review')
+    expect(models).toContain('gpt-5.6')
   })
 
   it('openai 模型列表不再暴露 GPT-5 之前的旧模型', () => {
