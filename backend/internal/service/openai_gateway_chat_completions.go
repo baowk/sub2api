@@ -245,11 +245,15 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				responsesBody = stripped
 			}
 		}
+		responsesBody, normalizedServiceTier, err := normalizeResponsesBodyServiceTier(responsesBody)
+		if err != nil {
+			return nil, fmt.Errorf("normalize service_tier in responses-shape body: %w", err)
+		}
 		// Minimal stub populated from the raw body so downstream billing
 		// propagation (ServiceTier, ReasoningEffort) keeps working.
 		responsesReq = &apicompat.ResponsesRequest{
 			Model:       upstreamModel,
-			ServiceTier: gjson.GetBytes(responsesBody, "service_tier").String(),
+			ServiceTier: normalizedServiceTier,
 		}
 		if effort := gjson.GetBytes(responsesBody, "reasoning.effort").String(); effort != "" {
 			responsesReq.Reasoning = &apicompat.ResponsesReasoning{Effort: effort}
@@ -262,6 +266,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			return nil, fmt.Errorf("convert chat completions to responses: %w", err)
 		}
 		responsesReq.Model = upstreamModel
+		normalizeResponsesRequestServiceTier(responsesReq)
 		responsesBody, err = json.Marshal(responsesReq)
 		if err != nil {
 			return nil, fmt.Errorf("marshal responses request: %w", err)
@@ -289,8 +294,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
 		}
+		isJSONObjectFormat := strings.EqualFold(strings.TrimSpace(gjson.GetBytes(responsesBody, "text.format.type").String()), "json_object")
 		codexResult := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
-			SkipDefaultInstructions: !isResponsesShape,
+			SkipDefaultInstructions:             !isResponsesShape,
+			OmitPromotedSystemMessagesFromInput: !isResponsesShape && !isJSONObjectFormat,
 		})
 		if !isResponsesShape {
 			ensureCodexOAuthInstructionsField(reqBody)
@@ -432,6 +439,41 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 
 	return result, handleErr
+}
+
+func normalizeResponsesRequestServiceTier(req *apicompat.ResponsesRequest) {
+	if req == nil {
+		return
+	}
+	req.ServiceTier = normalizedOpenAIServiceTierValue(req.ServiceTier)
+}
+
+func normalizeResponsesBodyServiceTier(body []byte) ([]byte, string, error) {
+	if len(body) == 0 {
+		return body, "", nil
+	}
+	rawServiceTier := gjson.GetBytes(body, "service_tier").String()
+	if rawServiceTier == "" {
+		return body, "", nil
+	}
+	normalizedServiceTier := normalizedOpenAIServiceTierValue(rawServiceTier)
+	if normalizedServiceTier == "" {
+		trimmed, err := sjson.DeleteBytes(body, "service_tier")
+		return trimmed, "", err
+	}
+	if normalizedServiceTier == rawServiceTier {
+		return body, normalizedServiceTier, nil
+	}
+	trimmed, err := sjson.SetBytes(body, "service_tier", normalizedServiceTier)
+	return trimmed, normalizedServiceTier, err
+}
+
+func normalizedOpenAIServiceTierValue(raw string) string {
+	normalized := normalizeOpenAIServiceTier(raw)
+	if normalized == nil {
+		return ""
+	}
+	return *normalized
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequestChatCompletionsCompat(
@@ -1078,9 +1120,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 
 	handleScanErr := func(err error) {
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("openai chat_completions stream: read error",
+			logger.FromContext(c.Request.Context()).Warn("openai chat_completions stream: read error",
 				zap.Error(err),
-				zap.String("request_id", requestID),
+				zap.String("upstream_request_id", requestID),
 			)
 		}
 	}
@@ -1119,7 +1161,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		if err := scanner.Err(); err != nil {
 			handleScanErr(err)
-			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
+			if clientDisconnected || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
+			}
+			return resultWithUsage(), newOpenAIUpstreamStreamReadError(err)
 		}
 		if frame, ok := parser.Finish(); ok {
 			if strings.TrimSpace(frame.Data) == "[DONE]" {
@@ -1191,7 +1236,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			if ev.err != nil {
 				handleScanErr(ev.err)
-				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
+				if clientDisconnected || errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
+				}
+				return resultWithUsage(), newOpenAIUpstreamStreamReadError(ev.err)
 			}
 			lastDataAt = time.Now()
 			line := ev.line
