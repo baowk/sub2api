@@ -468,14 +468,6 @@ func normalizeResponsesBodyServiceTier(body []byte) ([]byte, string, error) {
 	return trimmed, normalizedServiceTier, err
 }
 
-func normalizedOpenAIServiceTierValue(raw string) string {
-	normalized := normalizeOpenAIServiceTier(raw)
-	if normalized == nil {
-		return ""
-	}
-	return *normalized
-}
-
 func (s *OpenAIGatewayService) buildUpstreamRequestChatCompletionsCompat(
 	ctx context.Context,
 	c *gin.Context,
