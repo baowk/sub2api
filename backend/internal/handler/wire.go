@@ -105,6 +105,7 @@ func ProvideGatewayHandler(
 	usageService *service.UsageService,
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	chatSessionService *service.ChatSessionService,
 	errorPassthroughService *service.ErrorPassthroughService,
 	contentModerationService *service.ContentModerationService,
 	userMsgQueueService *service.UserMessageQueueService,
@@ -114,7 +115,7 @@ func ProvideGatewayHandler(
 ) *GatewayHandler {
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
-		errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)
+		chatSessionService, errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)
 	h.securityAuditCoordinator = coordinator
 	return h
 }
