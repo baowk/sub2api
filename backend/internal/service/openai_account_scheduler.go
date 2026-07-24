@@ -1692,10 +1692,6 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 		}
 		return false, reason
 	}
-	requestedModel := req.RequestedModel
-	if fallbackModel, ok := resolveOpenAIGPT55FallbackModel(account, requestedModel); ok {
-		requestedModel = fallbackModel
-	}
 	// 母账号健康联动：影子账号的凭据来自母账号，母账号不可调度时影子也不应被选中。
 	// Parent-health gate: shadow borrows the parent's credentials; an unschedulable
 	// parent must block the shadow across all scheduler paths.
@@ -1704,7 +1700,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	}) {
 		return false, "shadow_parent_unhealthy"
 	}
-	if requestedModel != "" && !isOpenAIAccountModelSchedulable(account, requestedModel) {
+	if req.RequestedModel != "" && !isOpenAIAccountModelSchedulable(account, req.RequestedModel) {
 		return false, "model_not_supported"
 	}
 	if req.GroupID != nil && s != nil && s.service != nil &&

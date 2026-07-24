@@ -147,44 +147,6 @@ func TestResolveOpenAIForwardModel(t *testing.T) {
 			messagesDispatchMappedModel: "  ",
 			expectedModel:               "gpt-5.5",
 		},
-		{
-			name: "does not fall back to gpt-5.4 unless explicitly enabled",
-			account: &Account{
-				Platform: PlatformOpenAI,
-				Type:     AccountTypeOAuth,
-				Credentials: map[string]any{
-					"supported_models": []any{"gpt-5.4"},
-				},
-			},
-			requestedModel: "gpt-5.5",
-			expectedModel:  "gpt-5.5",
-		},
-		{
-			name: "falls back to gpt-5.4 when explicitly enabled",
-			account: &Account{
-				Platform: PlatformOpenAI,
-				Type:     AccountTypeOAuth,
-				Credentials: map[string]any{
-					"gpt55_fallback_enabled": true,
-					"supported_models":       []any{"gpt-5.4"},
-				},
-			},
-			requestedModel: "gpt-5.5",
-			expectedModel:  "gpt-5.4",
-		},
-		{
-			name: "falls back to compact gpt-5.4 when explicitly enabled",
-			account: &Account{
-				Platform: PlatformOpenAI,
-				Type:     AccountTypeOAuth,
-				Credentials: map[string]any{
-					"gpt55_fallback_enabled": true,
-					"model_mapping":          map[string]any{"gpt-5.4-openai-compact": "gpt-5.4-openai-compact"},
-				},
-			},
-			requestedModel: "gpt-5.5-openai-compact",
-			expectedModel:  "gpt-5.4-openai-compact",
-		},
 	}
 
 	for _, tt := range tests {
