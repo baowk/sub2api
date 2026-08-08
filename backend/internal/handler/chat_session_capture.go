@@ -86,7 +86,7 @@ func enqueueChatSessionRecord(
 	finalOutputText string,
 	finalOutputJSON json.RawMessage,
 ) {
-	if recorder == nil || payload == nil {
+	if recorder == nil || payload == nil || !service.ShouldCaptureChatSession(payload.APIKeyID) {
 		return
 	}
 	requestBodyRef, requestBodySummary := maybeExternalizeChatSessionCapturePayload(

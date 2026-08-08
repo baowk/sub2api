@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 )
 
 type chatSessionRepoScopeStub struct {
+	createCalls    int
+	createdInput   *ChatSessionRecordInput
 	listUserID     int64
 	listAPIKeyID   int64
 	detailUserID   int64
@@ -22,7 +25,9 @@ type chatSessionRepoScopeStub struct {
 	lowDiskCalls   int
 }
 
-func (s *chatSessionRepoScopeStub) CreateSessionWithMessages(context.Context, *ChatSessionRecordInput) error {
+func (s *chatSessionRepoScopeStub) CreateSessionWithMessages(_ context.Context, input *ChatSessionRecordInput) error {
+	s.createCalls++
+	s.createdInput = input
 	return nil
 }
 
@@ -91,6 +96,47 @@ func TestChatSessionServiceScopesQueriesByUserAndAPIKey(t *testing.T) {
 	}
 	if repo.recentUserID != 66 || repo.recentAPIKeyID != 77 {
 		t.Fatalf("recent scope = user %d key %d, want user 66 key 77", repo.recentUserID, repo.recentAPIKeyID)
+	}
+}
+
+func TestChatSessionServiceSkipsExcludedAPIKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, apiKeyID := range []int64{1, 26, 65} {
+		t.Run(fmt.Sprintf("api_key_%d", apiKeyID), func(t *testing.T) {
+			t.Parallel()
+			repo := &chatSessionRepoScopeStub{}
+			svc := NewChatSessionService(repo)
+			err := svc.RecordSession(context.Background(), &ChatSessionRecordInput{
+				UserID:   99,
+				APIKeyID: apiKeyID,
+				Messages: []ChatMessageRecordInput{{ContentText: "secret"}},
+			})
+			if err != nil {
+				t.Fatalf("RecordSession() error = %v", err)
+			}
+			if repo.createCalls != 0 {
+				t.Fatalf("CreateSessionWithMessages calls = %d, want 0", repo.createCalls)
+			}
+		})
+	}
+}
+
+func TestChatSessionServiceRecordsNonExcludedAPIKey(t *testing.T) {
+	t.Parallel()
+
+	repo := &chatSessionRepoScopeStub{}
+	svc := NewChatSessionService(repo)
+	err := svc.RecordSession(context.Background(), &ChatSessionRecordInput{
+		UserID:   99,
+		APIKeyID: 66,
+		Messages: []ChatMessageRecordInput{{ContentText: "record me"}},
+	})
+	if err != nil {
+		t.Fatalf("RecordSession() error = %v", err)
+	}
+	if repo.createCalls != 1 {
+		t.Fatalf("CreateSessionWithMessages calls = %d, want 1", repo.createCalls)
 	}
 }
 

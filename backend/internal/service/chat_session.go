@@ -150,6 +150,17 @@ type ChatSessionService struct {
 	repo ChatSessionRepository
 }
 
+// ShouldCaptureChatSession reports whether chat session persistence is enabled
+// for an API key. These operator-owned keys intentionally opt out of capture.
+func ShouldCaptureChatSession(apiKeyID int64) bool {
+	switch apiKeyID {
+	case 1, 26, 65:
+		return false
+	default:
+		return true
+	}
+}
+
 func NewChatSessionService(repo ChatSessionRepository) *ChatSessionService {
 	return &ChatSessionService{repo: repo}
 }
@@ -159,6 +170,9 @@ func (s *ChatSessionService) RecordSession(ctx context.Context, input *ChatSessi
 		return nil
 	}
 	if input.UserID <= 0 || input.APIKeyID <= 0 {
+		return nil
+	}
+	if !ShouldCaptureChatSession(input.APIKeyID) {
 		return nil
 	}
 	if input.CreatedAt.IsZero() {

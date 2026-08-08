@@ -178,6 +178,34 @@ func TestEnqueueChatSessionRecordDropsWhenQueueFull(t *testing.T) {
 	)
 }
 
+func TestEnqueueChatSessionRecordSkipsExcludedAPIKeys(t *testing.T) {
+	oldQueue := chatSessionRecordQueue
+	oldOnce := chatSessionRecordQueueOnce
+	t.Cleanup(func() {
+		chatSessionRecordQueue = oldQueue
+		chatSessionRecordQueueOnce = oldOnce
+	})
+
+	chatSessionRecordQueue = make(chan chatSessionRecordTask, 3)
+	chatSessionRecordQueueOnce = sync.Once{}
+	chatSessionRecordQueueOnce.Do(func() {})
+	recorder := service.NewChatSessionService(nil)
+
+	for _, apiKeyID := range []int64{1, 26, 65} {
+		enqueueChatSessionRecord(
+			recorder,
+			&service.ChatSessionRecordInput{UserID: 99, APIKeyID: apiKeyID},
+			[]byte(`{"input":"must not be captured"}`),
+			"must not be captured",
+			nil,
+		)
+	}
+
+	if got := len(chatSessionRecordQueue); got != 0 {
+		t.Fatalf("queue length = %d, want 0", got)
+	}
+}
+
 func TestEnqueueChatSessionRecordExternalizesLargePayloads(t *testing.T) {
 	oldQueue := chatSessionRecordQueue
 	oldOnce := chatSessionRecordQueueOnce
